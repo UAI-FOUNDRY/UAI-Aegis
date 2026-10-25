@@ -223,7 +223,7 @@ async def _read_capped(stream: asyncio.StreamReader, cap: int) -> tuple[bytes, b
 class LocalDevExecutor(Executor):
     """Runs Python 3 locally for development. NOT a security boundary."""
 
-    PYTHON_KEYS = {"python3", "python"}
+    PYTHON_KEYS = {"python3", "python", "python3-ml"}
 
     def __init__(self, max_concurrency: int = 4) -> None:
         self._sem = asyncio.Semaphore(max_concurrency)

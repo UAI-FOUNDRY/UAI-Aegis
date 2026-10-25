@@ -64,6 +64,8 @@ class Exam(IdMixin, CreatedMixin, Base):
     policy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # proctoring policy
     marking: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # auto/manual split
     batch_ids: Mapped[list[str] | None] = mapped_column(JSON)  # NULL = all batches of the subject
+    # Language lock, e.g. ["python3"] for a Python lab exam. NULL = the questions' languages.
+    languages: Mapped[list[str] | None] = mapped_column(JSON)
     access_code_enc: Mapped[bytes | None] = mapped_column(LargeBinary)
     opened_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
@@ -92,6 +94,8 @@ class ExamSession(IdMixin, CreatedMixin, Base):
 
     exam_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"))
     student_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    # The batch (division) the student sat this exam with, for "who took it where" views.
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("batches.id", ondelete="SET NULL"))
     status: Mapped[SessionStatus] = mapped_column(
         Enum(SessionStatus, native_enum=False, length=16), default=SessionStatus.active
     )

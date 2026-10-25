@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..grading import get_grader
-from ..grading.registry import GradeResult, RunTarget, TestSpec
+from ..grading.registry import GradeResult, RunTarget, Runtime, TestSpec
 from ..models import (
     Answer,
     Difficulty,
@@ -131,7 +131,9 @@ def memory_for(question: Question, settings: Settings) -> int:
     return question.memory_limit_kb or settings.default_memory_limit_kb
 
 
-async def languages_for_question(db: AsyncSession, question: Question) -> list[Language]:
+async def languages_for_question(db: AsyncSession, question: Question, exam: Exam | None = None) -> list[Language]:
+    """Languages a student may answer this question in. An exam can lock the language
+    (e.g. a Python lab exam allows only Python), on top of the question/subject setting."""
     if question.allowed_languages:
         langs = await db.scalars(
             select(Language).where(Language.key.in_(question.allowed_languages), Language.is_enabled)
@@ -142,7 +144,19 @@ async def languages_for_question(db: AsyncSession, question: Question) -> list[L
             .join(SubjectLanguage, SubjectLanguage.language_id == Language.id)
             .where(SubjectLanguage.subject_id == question.subject_id, Language.is_enabled)
         )
-    return sorted(langs.all(), key=lambda lang: lang.name)
+    result = [lang for lang in langs.all() if _grader_accepts(question, lang.key)]
+    if exam is not None and exam.languages:
+        result = [lang for lang in result if lang.key in exam.languages]
+    return sorted(result, key=lambda lang: lang.name)
+
+
+def _grader_accepts(question: Question, language_key: str) -> bool:
+    """e.g. SQL questions take only 'sql', ML questions only Python."""
+    try:
+        get_grader(question.grader).validate_language(language_key)
+    except ValueError:
+        return False
+    return True
 
 
 async def load_tests(
@@ -166,19 +180,31 @@ async def load_tests(
     ]
 
 
-async def grade_code(
-    state: AppState, question: Question, language: Language, code: str, tests: list[TestSpec]
-) -> GradeResult:
-    grader = get_grader(question.grader)
-    target = RunTarget(
+async def build_target(
+    state: AppState, question: Question, language: Language, code: str, *, time_limit_ms: int | None = None
+) -> RunTarget:
+    python = None
+    if question.grader == "sql":  # SQL answers run inside a small Python harness
+        async with state.sessionmaker() as db:
+            py = await db.scalar(select(Language).where(Language.key == "python3"))
+        if py is not None:
+            python = Runtime(key=py.key, judge0_id=py.judge0_id, file_name=py.file_name)
+    return RunTarget(
         language_key=language.key,
         judge0_id=language.judge0_id,
         file_name=language.file_name,
         source=code,
-        time_limit_ms=time_limit_for(question, language, state.settings),
+        time_limit_ms=time_limit_ms or time_limit_for(question, language, state.settings),
         memory_limit_kb=memory_for(question, state.settings),
+        python=python,
     )
-    return await grader.grade(state.executor, target, tests, question.grader_config or {})
+
+
+async def grade_code(
+    state: AppState, question: Question, language: Language, code: str, tests: list[TestSpec]
+) -> GradeResult:
+    target = await build_target(state, question, language, code)
+    return await get_grader(question.grader).grade(state.executor, target, tests, question.grader_config or {})
 
 
 # ---------------------------------------------------------------------------- sessions

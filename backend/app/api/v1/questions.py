@@ -16,15 +16,16 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...errors import ApiError, bad_request, not_found
 from ...grading import get_grader, grader_keys
-from ...grading.executor import ExecRequest, ExecStatus
-from ...grading.registry import GradeResult
+from ...grading.executor import ExecStatus
+from ...grading.ml import split_dataset
+from ...grading.registry import GradeResult, TestSpec
 from ...models import (
     Difficulty,
     ExamPoolQuestion,
@@ -39,7 +40,7 @@ from ...models import (
 from ...security.crypto import AAD
 from ...services import audit
 from ...services.authz import Cap, caps_for, require_cap
-from ...services.exams import grade_code, load_tests, memory_for
+from ...services.exams import build_target, grade_code, load_tests
 from ...state import AppState
 from ..deps import get_db, get_state, require_professor
 
@@ -170,6 +171,8 @@ class TestResultOut(BaseModel):
     group: str
     weight: int
     verdict: str
+    credit: float
+    message: str
     time_ms: int | None
     memory_kb: int | None
     stdout: str
@@ -480,6 +483,9 @@ async def generate_outputs(question_id: uuid.UUID, only_missing: bool = Query(Fa
     output. Also measures the slowest run and sets the automatic time limit. Nothing is
     saved if the reference solution fails on any test."""
     question = await _question_for(db, user, question_id, Cap.edit)
+    grader = get_grader(question.grader)
+    if not grader.can_generate_expected:
+        raise bad_request("not_applicable", "This question type gets its expected answers from the uploaded data.")
     if not question.reference_enc or not question.reference_language:
         raise bad_request("no_reference", "Add a reference solution first.")
     lang = await _language(db, question.reference_language)
@@ -489,22 +495,33 @@ async def generate_outputs(question_id: uuid.UUID, only_missing: bool = Query(Fa
     if not tests:
         raise bad_request("no_tests", "Add test inputs first.")
     targets = [t for t in tests if not (only_missing and t.expected_enc)]
-    requests = [
-        ExecRequest(language_key=lang.key, judge0_id=lang.judge0_id, file_name=lang.file_name, source=code,
-                    stdin=state.cipher.decrypt_str(t.input_enc, AAD.test_input(t.id)),
-                    time_limit_ms=state.settings.max_time_limit_ms, memory_limit_kb=memory_for(question, state.settings))
-        for t in targets
-    ]
+    config = grader.validate_config(question.grader_config or {})
+    run_target = await build_target(state, question, lang, code, time_limit_ms=state.settings.max_time_limit_ms)
+    try:
+        grader.validate_language(lang.key)
+        requests = [grader.prepare(run_target, TestSpec(
+            id=str(t.id), ordinal=t.ordinal, is_sample=t.is_sample, group=t.group_name, weight=t.weight,
+            input=state.cipher.decrypt_str(t.input_enc, AAD.test_input(t.id)), expected=None,
+        ), config) for t in targets]
+    except ValueError as exc:
+        raise bad_request("bad_reference", str(exc)) from None
     results = await state.executor.run_batch(requests) if requests else []
-    failures = [
-        {"ordinal": t.ordinal, "status": r.status.value, "message": (r.compile_output or r.stderr or r.message)[:2000]}
-        for t, r in zip(targets, results, strict=True) if r.status is not ExecStatus.ok
-    ]
+    failures: list[dict[str, Any]] = []
+    expected: list[str] = []
+    for t, r in zip(targets, results, strict=True):
+        if r.status is not ExecStatus.ok:
+            failures.append({"ordinal": t.ordinal, "status": r.status.value,
+                             "message": (r.compile_output or r.stderr or r.message)[:2000]})
+            continue
+        try:
+            expected.append(grader.expected_from_output(r.stdout, config))
+        except ValueError as exc:
+            failures.append({"ordinal": t.ordinal, "status": "bad_output", "message": str(exc)})
     if failures:
         return GenerateReport(ok=False, generated=0, auto_time_limit_ms=question.auto_time_limit_ms,
                               slowest_ms=None, failures=failures)
-    for t, r in zip(targets, results, strict=True):
-        t.expected_enc = state.cipher.encrypt(r.stdout, AAD.test_expected(t.id))
+    for t, value in zip(targets, expected, strict=True):
+        t.expected_enc = state.cipher.encrypt(value, AAD.test_expected(t.id))
     slowest = max((r.time_ms or 0 for r in results), default=0)
     if results:
         settings = state.settings
@@ -517,6 +534,46 @@ async def generate_outputs(question_id: uuid.UUID, only_missing: bool = Query(Fa
                           slowest_ms=slowest, failures=[])
 
 
+@router.post("/questions/{question_id}/datasets", response_model=TestOut, status_code=201)
+async def add_dataset(
+    question_id: uuid.UUID,
+    train: UploadFile = File(..., description="Training data CSV, with the target column"),
+    test: UploadFile = File(..., description="Evaluation data CSV, with the target column"),
+    is_sample: bool = Form(False, description="Sample datasets are visible to students"),
+    weight: int = Form(1, ge=0, le=1000),
+    group: str = Form("main", min_length=1, max_length=64),
+    state: AppState = Depends(get_state),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_professor),
+):
+    """ML questions: add one train/test split as a test case. The test labels are kept
+    on the server and never sent to students or to the sandbox."""
+    question = await _question_for(db, user, question_id, Cap.edit)
+    if question.grader != "ml":
+        raise bad_request("not_ml", "Datasets are for questions using the 'ml' grader.")
+    config = get_grader("ml").validate_config(question.grader_config or {})
+    limit = state.settings.max_test_bytes
+    raw_train, raw_test = await train.read(limit + 1), await test.read(limit + 1)
+    if len(raw_train) + len(raw_test) > limit:
+        raise bad_request("too_large", f"Train + test must be under {limit // 1024} KB together.")
+    try:
+        stdin, labels = split_dataset(raw_train.decode("utf-8-sig"), raw_test.decode("utf-8-sig"), config["target"])
+    except UnicodeDecodeError:
+        raise bad_request("bad_encoding", "Save the CSV files as UTF-8.") from None
+    except ValueError as exc:
+        raise bad_request("bad_dataset", str(exc)) from None
+    ordinal = ((await db.scalar(select(func.max(TestCase.ordinal)).where(TestCase.question_id == question.id))) or 0) + 1
+    case = TestCase(id=uuid.uuid4(), question_id=question.id, ordinal=ordinal, is_sample=is_sample,
+                    group_name=group, weight=weight)
+    case.input_enc = state.cipher.encrypt(stdin, AAD.test_input(case.id))
+    case.expected_enc = state.cipher.encrypt(labels, AAD.test_expected(case.id))
+    db.add(case)
+    _touch(question)
+    await _record(db, state, user, "question.dataset_added", question, {"test_id": str(case.id)})
+    await db.commit()
+    return _test_out(state, case)
+
+
 async def _grade_against_all(db: AsyncSession, state: AppState, question: Question, language_key: str,
                              code: str) -> GradeOut:
     _check_size(state, code, state.settings.max_code_bytes, "Code")
@@ -524,7 +581,7 @@ async def _grade_against_all(db: AsyncSession, state: AppState, question: Questi
     tests = await load_tests(db, state.cipher, question.id)
     if not tests:
         raise bad_request("no_tests", "This question has no tests yet.")
-    if any(t.expected is None for t in tests):
+    if get_grader(question.grader).needs_expected and any(t.expected is None for t in tests):
         raise ApiError(409, "missing_expected", "Some tests have no expected output. Generate outputs first.")
     return grade_out(await grade_code(state, question, lang, code, tests))
 

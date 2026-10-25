@@ -25,6 +25,7 @@ from ...errors import ApiError, bad_request, conflict, forbidden, not_found, too
 from ...grading.registry import Verdict
 from ...models import (
     Answer,
+    Batch,
     BatchMember,
     ClientRelease,
     Device,
@@ -187,6 +188,7 @@ class TestFeedback(BaseModel):
     expected_output: str | None = None  # samples only
     stdout: str | None = None  # samples only
     stderr: str | None = None  # samples only
+    message: str | None = None  # e.g. SQL row-count difference or an ML score
 
 
 class RunOut(BaseModel):
@@ -246,14 +248,23 @@ async def _record(db, state: AppState, actor: User | None, action: str, session:
                        target_id=session.id, details={"exam_id": str(session.exam_id), **(details or {})})
 
 
+async def _exam_batch(db: AsyncSession, user: User, exam: Exam) -> uuid.UUID | None:
+    """The batch the student takes this exam with (first match by code), or None if
+    they are not enrolled."""
+    query = (select(Batch.id)
+             .join(BatchMember, BatchMember.batch_id == Batch.id)
+             .join(SubjectBatch, SubjectBatch.batch_id == Batch.id)
+             .where(BatchMember.user_id == user.id, SubjectBatch.subject_id == exam.subject_id)
+             .order_by(Batch.code))
+    allowed = {str(b) for b in exam.batch_ids} if exam.batch_ids else None
+    for batch_id in (await db.scalars(query)).all():
+        if allowed is None or str(batch_id) in allowed:
+            return batch_id
+    return None
+
+
 async def _is_enrolled(db: AsyncSession, user: User, exam: Exam) -> bool:
-    query = (select(BatchMember.batch_id)
-             .join(SubjectBatch, SubjectBatch.batch_id == BatchMember.batch_id)
-             .where(BatchMember.user_id == user.id, SubjectBatch.subject_id == exam.subject_id))
-    batches = {str(b) for b in (await db.scalars(query)).all()}
-    if exam.batch_ids:
-        batches &= {str(b) for b in exam.batch_ids}
-    return bool(batches)
+    return await _exam_batch(db, user, exam) is not None
 
 
 async def _session_for(
@@ -314,11 +325,13 @@ async def _question_in_session(db: AsyncSession, session: ExamSession, question_
     return question
 
 
-async def _language_for(db: AsyncSession, question: Question, key: str) -> Language:
-    for lang in await languages_for_question(db, question):
+async def _language_for(db: AsyncSession, question: Question, exam: Exam, key: str) -> Language:
+    """The exam's language lock is enforced here, on the server: a modified app cannot
+    submit Java in a Python-only exam."""
+    for lang in await languages_for_question(db, question, exam):
         if lang.key == key:
             return lang
-    raise bad_request("language_not_allowed", f"'{key}' is not allowed for this question.")
+    raise bad_request("language_not_allowed", f"'{key}' is not allowed in this exam.")
 
 
 def _check_code(state: AppState, code: str) -> None:
@@ -359,7 +372,7 @@ async def _view(db: AsyncSession, state: AppState, session: ExamSession, exam: E
                                  .where(SessionQuestion.session_id == session.id)
                                  .order_by(SessionQuestion.ordinal))).all()
         for q, ordinal in rows:
-            langs = await languages_for_question(db, q)
+            langs = await languages_for_question(db, q, exam)
             samples = await load_tests(db, state.cipher, q.id, samples_only=True)
             hidden = await db.scalar(select(func.count()).select_from(TestCase).where(
                 TestCase.question_id == q.id, TestCase.is_sample.is_(False)))
@@ -522,6 +535,7 @@ async def start_exam(exam_id: uuid.UUID, body: StartIn, state: AppState = Depend
     except SelectionError:
         raise conflict("exam_misconfigured", "This exam's question pool is incomplete. Tell your professor.") from None
     session = ExamSession(id=uuid.uuid4(), exam_id=exam.id, student_id=user.id, started_at=now,
+                          batch_id=await _exam_batch(db, user, exam),
                           deadline_at=now + timedelta(minutes=exam.duration_minutes), device_id=device.id,
                           client_version=body.client_version, status=SessionStatus.active)
     db.add(session)
@@ -563,7 +577,7 @@ async def save_answer(session_id: uuid.UUID, question_id: uuid.UUID, body: SaveI
     session, exam = await _session_for(db, user, device, session_id)
     await _ensure_writable(db, state, session, exam)
     question = await _question_in_session(db, session, question_id)
-    await _language_for(db, question, body.language)
+    await _language_for(db, question, exam, body.language)
     _check_code(state, body.code)
     answer = await _save(db, state, session, question, body.language, body.code, body.base_revision)
     await db.commit()
@@ -575,7 +589,7 @@ async def _execute(state: AppState, db: AsyncSession, user: User, device: Device
     session, exam = await _session_for(db, user, device, session_id)
     await _ensure_writable(db, state, session, exam)
     question = await _question_in_session(db, session, question_id)
-    language = await _language_for(db, question, body.language)
+    language = await _language_for(db, question, exam, body.language)
     _check_code(state, body.code)
     policy = effective_policy(exam.policy)
     if not await state.limiter.hit(f"run:{session.id}:{question.id}", policy.runs_per_minute, 60):
@@ -603,9 +617,10 @@ async def _execute(state: AppState, db: AsyncSession, user: User, device: Device
             spec = specs[t.test_id]
             feedback.append(TestFeedback(ordinal=t.ordinal, is_sample=True, verdict=t.verdict, time_ms=t.time_ms,
                                          input=spec.input, expected_output=spec.expected, stdout=t.stdout,
-                                         stderr=t.stderr))
+                                         stderr=t.stderr, message=t.message or None))
         elif reveal_hidden:
-            feedback.append(TestFeedback(ordinal=t.ordinal, is_sample=False, verdict=t.verdict, time_ms=t.time_ms))
+            feedback.append(TestFeedback(ordinal=t.ordinal, is_sample=False, verdict=t.verdict, time_ms=t.time_ms,
+                                         message=t.message or None))
     hidden = [t for t in result.tests if not t.is_sample]
     summary = None
     if kind == RunKind.submit and hidden:

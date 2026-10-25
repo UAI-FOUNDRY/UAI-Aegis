@@ -13,14 +13,17 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...errors import ApiError, bad_request, conflict, not_found
+from ...grading import get_grader
 from ...models import (
     AccessGrant,
     Answer,
+    Batch,
     BatchMember,
     Exam,
     ExamPoolQuestion,
     ExamSession,
     ExamStatus,
+    Language,
     ProctorEvent,
     Question,
     Run,
@@ -29,6 +32,7 @@ from ...models import (
     Severity,
     Subject,
     SubjectBatch,
+    SubjectLanguage,
     TestCase,
     User,
     utcnow,
@@ -69,6 +73,8 @@ class ExamIn(BaseModel):
     policy: ExamPolicy = Field(default_factory=ExamPolicy)
     marking: Marking = Field(default_factory=Marking)
     batch_ids: list[uuid.UUID] | None = Field(None, description="Limit to some of the subject's batches.")
+    languages: list[str] | None = Field(None, max_length=20,
+                                        description='Lock the exam to these languages, e.g. ["python3"].')
     question_ids: list[uuid.UUID] = Field(default_factory=list, max_length=500, description="The question pool.")
 
 
@@ -81,6 +87,7 @@ class ExamPatch(BaseModel):
     policy: ExamPolicy | None = None
     marking: Marking | None = None
     batch_ids: list[uuid.UUID] | None = None
+    languages: list[str] | None = Field(None, max_length=20)
 
 
 class PoolIn(BaseModel):
@@ -99,6 +106,7 @@ class ExamOut(BaseModel):
     policy: dict[str, Any]
     marking: dict[str, Any]
     batch_ids: list[uuid.UUID] | None
+    languages: list[str] | None
     question_ids: list[uuid.UUID]
     access_code: str | None
     opened_at: datetime | None
@@ -117,6 +125,7 @@ class ReadinessOut(BaseModel):
 
 class MonitorRow(BaseModel):
     student: UserBrief
+    batch_code: str | None = None
     session_id: uuid.UUID | None
     status: str  # not_started | active | locked | submitted | terminated
     connected: bool
@@ -225,6 +234,9 @@ class QuestionResult(BaseModel):
 
 class ResultRow(BaseModel):
     student: UserBrief
+    batch_id: uuid.UUID | None
+    batch_code: str | None
+    languages: list[str]
     session_id: uuid.UUID
     status: SessionStatus
     finish_reason: str | None
@@ -233,6 +245,28 @@ class ResultRow(BaseModel):
     total: float
     max_total: int
     questions: list[QuestionResult]
+
+
+class AnswerRow(BaseModel):
+    session_id: uuid.UUID
+    student: UserBrief
+    batch_code: str | None
+    question_id: uuid.UUID
+    question_title: str
+    language: str
+    code: str
+    is_final: bool
+    updated_at: datetime
+    auto_fraction: float | None
+    manual_marks: float | None
+    override_marks: float | None
+    total: float
+    marks: int
+
+
+class AnswerPage(BaseModel):
+    total: int
+    items: list[AnswerRow]
 
 
 # ------------------------------------------------------------------------------ helpers
@@ -276,6 +310,35 @@ async def _validate_batches(db: AsyncSession, subject_id: uuid.UUID, batch_ids: 
         raise bad_request("unknown_batch", "Exam batches must be linked to the subject first.")
 
 
+async def _validate_languages(db: AsyncSession, subject_id: uuid.UUID, keys: list[str] | None) -> list[str] | None:
+    """An exam's language lock must use languages the subject teaches."""
+    if not keys:
+        return None
+    keys = sorted(set(keys))
+    taught = set((await db.scalars(
+        select(Language.key).join(SubjectLanguage, SubjectLanguage.language_id == Language.id)
+        .where(SubjectLanguage.subject_id == subject_id, Language.is_enabled)
+    )).all())
+    missing = set(keys) - taught
+    if missing:
+        raise bad_request("unknown_language",
+                          f"Not enabled for this subject: {', '.join(sorted(missing))}. Add them to the subject first.")
+    return keys
+
+
+async def batch_codes(db: AsyncSession, exam: Exam) -> dict[uuid.UUID, str]:
+    """Each enrolled student's batch for this exam (their first matching batch, by code)."""
+    allowed = select(SubjectBatch.batch_id).where(SubjectBatch.subject_id == exam.subject_id)
+    query = (select(BatchMember.user_id, Batch.code).join(Batch, Batch.id == BatchMember.batch_id)
+             .where(BatchMember.batch_id.in_(allowed)).order_by(Batch.code))
+    if exam.batch_ids:
+        query = query.where(BatchMember.batch_id.in_([uuid.UUID(str(b)) for b in exam.batch_ids]))
+    codes: dict[uuid.UUID, str] = {}
+    for user_id, code in (await db.execute(query)).all():
+        codes.setdefault(user_id, code)
+    return codes
+
+
 async def _exam_out(db: AsyncSession, state: AppState, exam: Exam, caps: set[Cap]) -> ExamOut:
     code = None
     if exam.access_code_enc and exam.status == ExamStatus.live and Cap.proctor in caps:
@@ -286,6 +349,7 @@ async def _exam_out(db: AsyncSession, state: AppState, exam: Exam, caps: set[Cap
         selection=Selection.model_validate(exam.selection or {}).model_dump(mode="json"),
         policy=effective_policy(exam.policy).model_dump(mode="json"),
         marking=Marking.model_validate(exam.marking or {}).model_dump(), batch_ids=exam.batch_ids,
+        languages=exam.languages,
         question_ids=await _pool_ids(db, exam.id), access_code=code, opened_at=exam.opened_at,
         closed_at=exam.closed_at, results_released_at=exam.results_released_at, created_at=exam.created_at,
         updated_at=exam.updated_at, my_caps=sorted(caps),
@@ -303,16 +367,19 @@ async def _enrolled_students(db: AsyncSession, exam: Exam) -> list[User]:
     return list((await db.scalars(query.distinct().order_by(User.full_name))).all())
 
 
-def _row(student: User, session: ExamSession | None, events: int, policy: ExamPolicy, now: datetime) -> MonitorRow:
+def _row(student: User, session: ExamSession | None, events: int, policy: ExamPolicy, now: datetime,
+         batch_code: str | None = None) -> MonitorRow:
     if session is None:
-        return MonitorRow(student=UserBrief.model_validate(student), session_id=None, status="not_started",
+        return MonitorRow(student=UserBrief.model_validate(student), batch_code=batch_code, session_id=None,
+                          status="not_started",
                           connected=False, strikes=0, lock_reason=None, device_change_pending=False, flagged=False,
                           started_at=None, deadline_at=None, finished_at=None, finish_reason=None,
                           last_heartbeat_at=None, event_count=0, grading_status=None)
     connected = bool(session.last_heartbeat_at and
                      now - session.last_heartbeat_at <= timedelta(seconds=policy.heartbeat_timeout_seconds))
     return MonitorRow(
-        student=UserBrief.model_validate(student), session_id=session.id, status=session.status.value,
+        student=UserBrief.model_validate(student), batch_code=batch_code, session_id=session.id,
+        status=session.status.value,
         connected=connected and session.status not in FINISHED, strikes=session.strikes,
         lock_reason=session.lock_reason, device_change_pending=session.pending_device_id is not None,
         flagged=session.flagged, started_at=session.started_at, deadline_at=session.deadline_at,
@@ -356,17 +423,19 @@ async def check_ready(db: AsyncSession, state: AppState, exam: Exam) -> Readines
             func.count(TestCase.id), func.count(TestCase.id).filter(TestCase.expected_enc.is_(None)),
             func.count(TestCase.id).filter(TestCase.is_sample.is_(False)),
         ).where(TestCase.question_id == q.id))).one()
+        grader = get_grader(q.grader)
+        missing_expected = counts[1] if grader.needs_expected else 0
         if counts[0] == 0:
             problems.append(f"{name} has no tests.")
-        elif counts[1]:
+        elif missing_expected:
             problems.append(f"{name} has {counts[1]} test(s) without an expected output.")
         elif counts[2] == 0:
             warnings.append(f"{name} has only sample tests; marks will depend on visible tests.")
-        if not await languages_for_question(db, q):
-            problems.append(f"{name} has no enabled language. Set the subject's languages.")
-        if q.reference_enc and q.reference_language and counts[0] and not counts[1]:
-            lang = next((lang for lang in await languages_for_question(db, q) if lang.key == q.reference_language),
-                        None)
+        if not await languages_for_question(db, q, exam):
+            locked = f" in {', '.join(exam.languages)}" if exam.languages else ""
+            problems.append(f"{name} cannot be answered{locked}. Check the question's and the exam's languages.")
+        if q.reference_enc and q.reference_language and counts[0] and not missing_expected:
+            lang = await db.scalar(select(Language).where(Language.key == q.reference_language, Language.is_enabled))
             if lang is not None:
                 result = await grade_code(state, q, lang, state.cipher.decrypt_str(q.reference_enc, AAD.reference(q.id)),
                                           await load_tests(db, state.cipher, q.id))
@@ -408,11 +477,13 @@ async def create_exam(subject_id: uuid.UUID, body: ExamIn, state: AppState = Dep
     if await db.get(Subject, subject_id) is None:
         raise not_found()
     await _validate_batches(db, subject_id, body.batch_ids)
+    languages = await _validate_languages(db, subject_id, body.languages)
     exam = Exam(
         id=uuid.uuid4(), subject_id=subject_id, title=body.title.strip(), instructions_md=body.instructions_md,
         duration_minutes=body.duration_minutes, join_window_minutes=body.join_window_minutes,
         selection=body.selection.model_dump(mode="json"), policy=body.policy.model_dump(mode="json"),
         marking=body.marking.model_dump(), batch_ids=[str(b) for b in body.batch_ids] if body.batch_ids else None,
+        languages=languages,
         created_by=user.id,
     )
     db.add(exam)
@@ -444,6 +515,8 @@ async def update_exam(exam_id: uuid.UUID, body: ExamPatch, state: AppState = Dep
     if "batch_ids" in changes:
         await _validate_batches(db, exam.subject_id, body.batch_ids)
         exam.batch_ids = [str(b) for b in body.batch_ids] if body.batch_ids else None
+    if "languages" in changes:
+        exam.languages = await _validate_languages(db, exam.subject_id, body.languages)
     for field in ("title", "instructions_md", "duration_minutes", "join_window_minutes"):
         if field in changes:
             setattr(exam, field, changes[field])
@@ -571,7 +644,8 @@ async def regrade(exam_id: uuid.UUID, everyone: bool = Query(False, description=
 
 
 @router.get("/exams/{exam_id}/monitor", response_model=MonitorOut)
-async def monitor(exam_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: User = Depends(require_professor)):
+async def monitor(exam_id: uuid.UUID, batch_code: str | None = Query(None, max_length=64),
+                  db: AsyncSession = Depends(get_db), user: User = Depends(require_professor)):
     """Live view of every enrolled student. Poll every few seconds during the exam."""
     exam, _ = await _exam_for(db, user, exam_id, Cap.view)
     policy = effective_policy(exam.policy)
@@ -587,8 +661,20 @@ async def monitor(exam_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: 
             ProctorEvent.session_id.in_([s.id for s in sessions.values()])
         ).group_by(ProctorEvent.session_id)
     )).all()) if sessions else {}
-    rows = [_row(st, sessions.get(sid), event_counts.get(sessions[sid].id, 0) if sid in sessions else 0, policy, now)
+    enrolled_codes = await batch_codes(db, exam)
+    session_codes = await _batch_code_map(db, {x.batch_id for x in sessions.values() if x.batch_id})
+
+    def code_for(student_id: uuid.UUID) -> str | None:
+        session = sessions.get(student_id)
+        if session is not None and session.batch_id:
+            return session_codes.get(session.batch_id)
+        return enrolled_codes.get(student_id)
+
+    rows = [_row(st, sessions.get(sid), event_counts.get(sessions[sid].id, 0) if sid in sessions else 0, policy, now,
+                 batch_code=code_for(sid))
             for sid, st in students.items()]
+    if batch_code:
+        rows = [r for r in rows if r.batch_code == batch_code]
     rows.sort(key=lambda r: ({"locked": 0, "active": 1, "not_started": 2}.get(r.status, 3), r.student.full_name))
     counts = Counter(r.status for r in rows)
     counts["disconnected"] = sum(1 for r in rows if r.status in ("active", "locked") and not r.connected)
@@ -776,8 +862,15 @@ async def set_marks(exam_id: uuid.UUID, session_id: uuid.UUID, question_id: uuid
     )
 
 
+async def _batch_code_map(db: AsyncSession, batch_ids: set[uuid.UUID]) -> dict[uuid.UUID, str]:
+    if not batch_ids:
+        return {}
+    return dict((await db.execute(select(Batch.id, Batch.code).where(Batch.id.in_(batch_ids)))).all())
+
+
 async def compute_results(db: AsyncSession, exam: Exam, sessions: list[ExamSession]) -> list[ResultRow]:
     marking = Marking.model_validate(exam.marking or {})
+    codes = await _batch_code_map(db, {s.batch_id for s in sessions if s.batch_id})
     rows = []
     for session in sessions:
         student = await db.get(User, session.student_id)
@@ -789,7 +882,9 @@ async def compute_results(db: AsyncSession, exam: Exam, sessions: list[ExamSessi
         per_q = [QuestionResult(question_id=q.id, title=q.title, total=_marks(q, marking, answers.get(q.id))[0],
                                 max=q.marks) for q in assigned]
         rows.append(ResultRow(
-            student=UserBrief.model_validate(student), session_id=session.id, status=session.status,
+            student=UserBrief.model_validate(student), batch_id=session.batch_id,
+            batch_code=codes.get(session.batch_id), languages=sorted({a.language for a in answers.values()}),
+            session_id=session.id, status=session.status,
             finish_reason=session.finish_reason, flagged=session.flagged, grading_status=session.grading_status,
             total=round(sum(r.total for r in per_q), 2), max_total=sum(r.max for r in per_q), questions=per_q,
         ))
@@ -797,8 +892,55 @@ async def compute_results(db: AsyncSession, exam: Exam, sessions: list[ExamSessi
 
 
 @router.get("/exams/{exam_id}/results", response_model=list[ResultRow])
-async def results(exam_id: uuid.UUID, db: AsyncSession = Depends(get_db), user: User = Depends(require_professor)):
+async def results(exam_id: uuid.UUID, batch_id: uuid.UUID | None = None,
+                  language: str | None = Query(None, max_length=32),
+                  db: AsyncSession = Depends(get_db), user: User = Depends(require_professor)):
+    """Marks per student. Filter by batch (division) or by the language students answered in."""
     exam, _ = await _exam_for(db, user, exam_id, Cap.view)
-    sessions = (await db.scalars(select(ExamSession).where(ExamSession.exam_id == exam.id))).all()
-    rows = await compute_results(db, exam, list(sessions))
-    return sorted(rows, key=lambda r: r.student.full_name)
+    query = select(ExamSession).where(ExamSession.exam_id == exam.id)
+    if batch_id:
+        query = query.where(ExamSession.batch_id == batch_id)
+    if language:
+        query = query.where(ExamSession.id.in_(select(Answer.session_id).where(Answer.language == language)))
+    rows = await compute_results(db, exam, list((await db.scalars(query)).all()))
+    return sorted(rows, key=lambda r: (r.batch_code or "", r.student.full_name))
+
+
+@router.get("/exams/{exam_id}/answers", response_model=AnswerPage)
+async def list_answers(
+    exam_id: uuid.UUID,
+    language: str | None = Query(None, max_length=32, description="e.g. python3: only Python answers"),
+    batch_id: uuid.UUID | None = None,
+    question_id: uuid.UUID | None = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    state: AppState = Depends(get_state),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_professor),
+):
+    """Every saved answer of an exam with its code and marks, for checking answers one
+    after another. Filter by language, batch and question."""
+    exam, _ = await _exam_for(db, user, exam_id, Cap.view)
+    marking = Marking.model_validate(exam.marking or {})
+    query = (select(Answer, ExamSession, Question, User)
+             .join(ExamSession, ExamSession.id == Answer.session_id)
+             .join(Question, Question.id == Answer.question_id)
+             .join(User, User.id == ExamSession.student_id)
+             .where(ExamSession.exam_id == exam.id))
+    if language:
+        query = query.where(Answer.language == language)
+    if batch_id:
+        query = query.where(ExamSession.batch_id == batch_id)
+    if question_id:
+        query = query.where(Answer.question_id == question_id)
+    total = await db.scalar(select(func.count()).select_from(query.subquery()))
+    rows = (await db.execute(query.order_by(Question.title, User.full_name).limit(limit).offset(offset))).all()
+    codes = await _batch_code_map(db, {sess.batch_id for _, sess, _, _ in rows if sess.batch_id})
+    items = [AnswerRow(
+        session_id=sess.id, student=UserBrief.model_validate(student), batch_code=codes.get(sess.batch_id),
+        question_id=q.id, question_title=q.title, language=a.language,
+        code=state.cipher.decrypt_str(a.code_enc, AAD.answer(sess.id, q.id)), is_final=a.is_final,
+        updated_at=a.updated_at, auto_fraction=a.auto_fraction, manual_marks=a.manual_marks,
+        override_marks=a.override_marks, total=_marks(q, marking, a)[0], marks=q.marks,
+    ) for a, sess, q, student in rows]
+    return AnswerPage(total=total or 0, items=items)
