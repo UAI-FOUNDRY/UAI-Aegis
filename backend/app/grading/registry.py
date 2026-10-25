@@ -15,7 +15,6 @@ The hooks:
 - validate_test_input / validate_expected: check a test a professor types in (e.g.
                    function questions need JSON arguments), so mistakes show up when
                    the test is saved instead of during the exam
-- default_starter: starter code students see when the professor wrote none
 """
 
 from __future__ import annotations
@@ -163,10 +162,6 @@ class Grader(ABC):
     def validate_expected(self, text: str, config: dict[str, Any]) -> str:
         """Check (and normalise) an expected output typed by a professor."""
         return text
-
-    def default_starter(self, language_key: str, config: dict[str, Any]) -> str | None:
-        """Starter code shown to students when the question has none for this language."""
-        return None
 
     @abstractmethod
     def check(self, test: TestSpec, result: ExecResult, config: dict[str, Any]) -> Check:

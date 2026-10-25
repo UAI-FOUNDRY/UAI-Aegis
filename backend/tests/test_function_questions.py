@@ -67,16 +67,29 @@ async def test_professor_workflow_validates_tests_and_generates_expected_values(
     printed = (await c.post(f"/api/v1/questions/{qid}/try", headers=h, json={
         "language": "python3", "code": "def two_sum(nums, target):\n    print([0, 1])\n"})).json()
     assert {t["verdict"] for t in printed["tests"]} == {"WA"}  # printing is not returning
-    missing = (await c.post(f"/api/v1/questions/{qid}/try", headers=h, json={
-        "language": "python3", "code": "def solve(nums, target):\n    return [0, 1]\n"})).json()
-    assert {t["verdict"] for t in missing["tests"]} == {"RE"}
-    assert "Define a function two_sum" in missing["tests"][0]["stderr"]
+    # The function's name does not matter: only whether it works
+    for code in (
+        "def lookup(seen, x):\n    return seen.get(x)\n\n"
+        "def find_pair(nums, target):\n    seen = {}\n    for i, n in enumerate(nums):\n"
+        "        if lookup(seen, target - n) is not None:\n            return [seen[target - n], i]\n"
+        "        seen[n] = i\n",
+        "class Solution:\n    def twoSum(self, nums, target):\n        seen = {}\n"
+        "        for i, n in enumerate(nums):\n            if target - n in seen:\n"
+        "                return [seen[target - n], i]\n            seen[n] = i\n",
+    ):
+        other = (await c.post(f"/api/v1/questions/{qid}/try", headers=h,
+                              json={"language": "python3", "code": code})).json()
+        assert other["fraction"] == 1.0, other
+    nothing = (await c.post(f"/api/v1/questions/{qid}/try", headers=h, json={
+        "language": "python3", "code": "x = 1\n"})).json()
+    assert {t["verdict"] for t in nothing["tests"]} == {"WA"}
+    assert {t["message"] for t in nothing["tests"]} == {"no value was returned"}
     # C cannot answer a function question
     r = await c.post(f"/api/v1/questions/{qid}/try", headers=h, json={"language": "c", "code": "int main(){}"})
     assert {t["verdict"] for t in r.json()["tests"]} == {"IE"}
 
 
-async def test_student_gets_default_starter_and_safe_feedback(api):
+async def test_empty_editor_and_safe_feedback(api):
     c = api.client
     _, admin_h = await api.staff(Role.admin)
     prof, h = await api.staff(Role.professor)
@@ -98,8 +111,7 @@ async def test_student_gets_default_starter_and_safe_feedback(api):
 
     view = (await api.signed(student, "POST", f"/api/v1/student/exams/{exam['id']}/start", {"access_code": code})).json()
     (q,) = view["questions"]
-    assert q["starter_code"] == {"python3": "def two_sum(nums, target):\n    # return the answer (do not print it)\n"
-                                            "    pass\n"}
+    assert q["starter_code"] == {}  # the editor starts empty
     assert json.loads(q["samples"][0]["input"]) == [[2, 7, 11, 15], 9]
 
     base = f"/api/v1/student/sessions/{view['session_id']}/answers/{qid}"
@@ -122,7 +134,7 @@ def test_config_is_validated():
                 {"function_name": "require"}, {"params": ["a", "a"]}, {"params": ["x y"]}, {"compare": "fuzzy"}):
         with pytest.raises(ValueError):
             g.validate_config(bad)
-    assert g.validate_config({})["function_name"] == "solve"
+    assert g.validate_config({})["function_name"] is None
 
 
 def test_value_comparison_modes():
@@ -143,6 +155,11 @@ def test_javascript_harness_runs_in_node():
         " for (let i = 0; i < nums.length; i++) { if (m.has(target - nums[i])) return [m.get(target - nums[i]), i];"
         " m.set(nums[i], i); } }",
         "const two_sum = async (nums, target) => { process.stdout.write('noise\\n'); return [1, 2]; };",
+        # any name, a helper, or a LeetCode-style class
+        "const lookup = (m, x) => m.get(x);\nconst pairUp = (nums, target) => { const m = new Map();"
+        " for (let i = 0; i < nums.length; i++) { const j = lookup(m, target - nums[i]);"
+        " if (j !== undefined) return [j, i]; m.set(nums[i], i); } };",
+        "class Solution { twoSum(nums, target) { return [1, 2]; } }",
     ):
         req = g.prepare(RunTarget("javascript", 63, "main.js", source, 2000, 262144), spec, config)
         out = subprocess.run(["node", "-e", req.source], input=req.stdin, capture_output=True, text=True, timeout=20)

@@ -117,20 +117,27 @@ GET  /api/v1/student/results                                 bearer only: releas
   `base_revision`; `409 stale_revision` means reload the draft from `GET session`.
   Also keep a local encrypted copy so a Wi-Fi drop loses nothing; resend when back.
 - **Run** also saves. Final marks always use the latest saved code when the exam ends.
-- **Monaco**: each question lists `languages` with `monaco_id` and `starter_code` per
-  language key; use them directly, no hard-coded language list in the app. When the
-  list has one language (a locked exam, e.g. Python only), show no language picker.
+- **Layout**: question on the left (statement, samples, datasets), a large Monaco
+  editor on the right with Run / Submit and a results panel under it, like most coding
+  sites. Questions as tabs or a list when there are several.
+- **Monaco**: each question lists `languages` with `monaco_id`; use them directly, no
+  hard-coded language list in the app. When the list has one language (a locked exam,
+  e.g. Python only), show no language picker. The editor starts **empty**; only if a
+  professor deliberately wrote `starter_code` for that language, load it.
 - **SQL questions** use the `sql` language (Monaco `sql`). Sample inputs are the test's
   data (INSERT statements); outputs are JSON `{"columns": [...], "rows": [[...]]}`; show
   them as small tables.
-- **Function questions** (LeetCode style): `starter_code` already contains the empty
-  function (e.g. `def two_sum(nums, target):`). A sample's `input` is the arguments as
+- **Function questions** (LeetCode style): the student writes a function with any
+  name and returns the answer. A sample's `input` is the arguments as
   a JSON list (`[[2, 7, 11, 15], 9]`) and `expected_output` is the returned value as
   JSON (`[0, 1]`); label them "Arguments" and "Returns". In run results, `stdout` is the
   value the function returned and `stderr` holds anything the student printed.
 - **ML questions** use `python3-ml`. A sample's `input` is JSON `{"train": csv, "test":
-  csv}` and its `expected_output` is the list of labels: offer them as downloadable
-  CSV files rather than printing them. Results carry a `message` with the score.
+  csv}` and its `expected_output` is the list of labels. Show them **inside the app**
+  as a scrollable read-only table (first few hundred rows, with a row count). No
+  download or "save as" button, no file dialogs: the data is already in the API
+  response, and the student's code receives it on the server, never from their disk.
+  Results carry a `message` with the score.
 - **Finish** returns a receipt (SHA-256) per answer. Show them to the student.
 
 ## 5. Report events
@@ -189,6 +196,15 @@ Windows first, then macOS, then Linux:
   desktop / screen sharing / recording tools and blocked apps; report events.
 - Send heartbeat every 10 s with `focused`, `fullscreen`, `displays`.
 - On relaunch during an exam, report `app_restarted`.
+- **No way out to the internet or the file system from the app:**
+  - CSP `connect-src` and `img-src` only the API server (plus `data:` for images);
+    no remote fonts, scripts or frames.
+  - Block every navigation away from the app's own pages (`on_navigation` in Tauri),
+    and render Markdown links as plain text, never clickable.
+  - Do not enable Tauri's shell/opener, fs or dialog plugins: nothing opens a browser,
+    a file picker or a folder.
+  - Students upload nothing but code text. Datasets come from professors through the
+    portal, are stored on the server, and reach the app only inside API responses.
 - Sign releases; send `client_version` and the build's SHA-256 on start.
 
 ## 8. Keep the web view safe

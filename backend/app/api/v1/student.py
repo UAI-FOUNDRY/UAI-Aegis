@@ -22,7 +22,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...errors import ApiError, bad_request, conflict, forbidden, not_found, too_many
-from ...grading import get_grader
 from ...grading.registry import Verdict
 from ...models import (
     Answer,
@@ -365,22 +364,6 @@ async def _receipts(db: AsyncSession, session: ExamSession) -> list[Receipt]:
     return [Receipt(question_id=a.question_id, receipt=a.receipt) for a in answers]
 
 
-def _starters(question: Question, langs: list[Language]) -> dict[str, str]:
-    """The professor's starter code, or the question type's default (e.g. an empty
-    `def solve(nums, target):` for function questions)."""
-    grader = get_grader(question.grader)
-    try:
-        config = grader.validate_config(question.grader_config or {})
-    except ValueError:
-        config = {}
-    out = {}
-    for lang in langs:
-        code = (question.starter_code or {}).get(lang.key) or grader.default_starter(lang.key, config)
-        if code:
-            out[lang.key] = code
-    return out
-
-
 async def _view(db: AsyncSession, state: AppState, session: ExamSession, exam: Exam, device: Device) -> SessionView:
     now = utcnow()
     policy = effective_policy(exam.policy)
@@ -402,7 +385,7 @@ async def _view(db: AsyncSession, state: AppState, session: ExamSession, exam: E
                 marks=q.marks,
                 languages=[LanguageBrief(key=lang.key, name=lang.name, monaco_id=lang.monaco_id) for lang in langs],
                 time_limits_ms={lang.key: time_limit_for(q, lang, state.settings) for lang in langs},
-                starter_code=_starters(q, langs),
+                starter_code={k: v for k, v in (q.starter_code or {}).items() if k in {lang.key for lang in langs}},
                 samples=[SampleOut(ordinal=s.ordinal, input=s.input, expected_output=s.expected or "")
                          for s in samples],
                 hidden_test_count=hidden or 0,

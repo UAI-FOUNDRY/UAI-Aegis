@@ -15,7 +15,7 @@ uai-aegis/
   shared/       UI components + API client generated from the contract  (Dev 3)
   api/          openapi.json: the API contract all three apps share
   judge/        Judge0 sandbox config
-  docs/         SECURITY.md, CLIENT_PROTOCOL.md (Dev 2), PORTAL_GUIDE.md (Dev 3)
+  docs/         STATUS.md (what is built), SECURITY.md, CLIENT_PROTOCOL.md (Dev 2), PORTAL_GUIDE.md (Dev 3)
 ```
 
 ## Run the backend
@@ -105,10 +105,10 @@ python -m app.cli demo-data   # add any new demo subjects (existing ones are kep
 - **ML**: the student writes `solve(train_csv, test_csv)` in Python; predictions are
   scored on the server against hidden labels (accuracy, F1, precision, recall, R²,
   RMSE, MAE) with partial marks by threshold. Datasets are uploaded as CSVs.
-- **Function (LeetCode style)**: the student writes only a function, e.g.
-  `def two_sum(nums, target)`, in Python or JavaScript, and returns the answer. Each
-  test is a JSON list of arguments; the returned value is compared (exactly, with a
-  float tolerance, or as a list in any order).
+- **Function (LeetCode style)**: the student writes a function (any name) in Python
+  or JavaScript and returns the answer. Each test is a JSON list of arguments; the
+  returned value is compared (exactly, with a float tolerance, or as a list in any
+  order). The editor starts empty for every question type.
 
 A lab exam can be **locked to one language** (e.g. Python only). Students then see only
 that language, and the server rejects anything else.

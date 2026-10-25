@@ -1,0 +1,36 @@
+UAI Aegis patch v0.5 -> v0.7  (use this one; skip the v0.6 zip)
+==============================================================
+- The student's code editor starts EMPTY for every question type. Demo questions no
+  longer have starter code; their hints are in the question text.
+- Function questions: the function's NAME DOES NOT MATTER. The grader finds the
+  student's function (with helpers, or LeetCode-style `class Solution`) and runs the
+  tests; marks depend only on whether it works. No "define a function X" messages.
+  Works in Python and JavaScript.
+- Docs for Dev 2: question left / editor right layout, empty editor, datasets in a
+  read-only in-app table, no route from the app to the internet or the file system.
+- docs/STATUS.md: everything built so far, for the team and the mentor.
+- Version 0.7.0. No database changes.
+
+HOW TO APPLY (in backend\ with the environment active)
+1. Copy the "uai-aegis" folder over your project folder ("Replace" when asked).
+2. Rebuild the development database so the demo questions are updated
+   (demo data only, nothing real is lost):
+     del aegis-dev.db
+     alembic upgrade head
+     python -m app.cli seed
+     python -m app.cli demo-data
+3. Restart the server (uvicorn app.main:app --reload), then:
+     python -m app.cli simulate
+   New checks: "the code editor starts empty"; in the function lab student 1 names the
+   function find_pair (the reference uses two_sum) and still gets full marks.
+
+CHANGED FILES
+  backend/app/grading/function.py      finds the student's function by itself (any name)
+  backend/app/grading/registry.py      removed the default-starter hook
+  backend/app/api/v1/student.py        editor starts empty (only starter code a professor wrote is sent)
+  backend/app/seed.py                  demo questions without starter code
+  backend/app/simulate.py              checks empty editor and a differently named function
+  backend/app/__init__.py, backend/pyproject.toml   version 0.7.0
+  backend/tests/test_function_questions.py
+  api/openapi.json                     version number only
+  docs/STATUS.md (new), docs/CLIENT_PROTOCOL.md, docs/PORTAL_GUIDE.md, docs/SECURITY.md, README.md

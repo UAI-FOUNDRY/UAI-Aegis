@@ -42,8 +42,9 @@ LABS = {
                 wrong="SELECT name, 'x' FROM employees;"),
     "ml": dict(subject="DEMO-ML-LAB", language="python3-ml", good=_ML_REFERENCE,
                wrong="def solve(train_csv, test_csv):\n    return [0] * (len(test_csv.splitlines()) - 1)\n"),
-    "function": dict(subject="DEMO-DSA-LAB", language="python3", good=_FUNC_REFERENCE,
-                     wrong="def two_sum(nums, target):\n    return [0, 1]\n", starter="def two_sum(nums, target):"),
+    # student 1 names the function differently from the reference: names do not matter
+    "function": dict(subject="DEMO-DSA-LAB", language="python3", good=_FUNC_REFERENCE.replace("two_sum", "find_pair"),
+                     wrong="def two_sum(nums, target):\n    return [0, 1]\n"),
 }
 
 
@@ -200,9 +201,7 @@ class Sim:
         (question,) = view["questions"]
         langs = [lang["key"] for lang in question["languages"]]
         self.check(langs == [lab["language"]], f"only {lab['language']} is offered", str(langs))
-        if "starter" in lab:
-            starter = question["starter_code"].get(lab["language"], "")
-            self.check(starter.startswith(lab["starter"]), f"student sees the starter `{lab['starter']}`", starter)
+        self.check(not question["starter_code"], "the code editor starts empty", str(question["starter_code"]))
         self.check(live.wait_for(lambda m: m["type"] == "row" and m["data"]["student"]["email"] == s1.email) is not None,
                    "live monitor showed student 1 starting")
         sessions = {s1.email: view["session_id"]}

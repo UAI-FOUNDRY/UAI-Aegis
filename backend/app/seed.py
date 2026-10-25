@@ -71,16 +71,6 @@ async def seed_reference_data(db: AsyncSession) -> int:
 
 DEMO_PASSWORD = "Aegis-demo-2026!"
 _REFERENCE = "a, b = map(int, input().split())\nprint(a + b)\n"
-_STARTER = {
-    "python3": "a, b = map(int, input().split())\n# print the sum\n",
-    "c": "#include <stdio.h>\n\nint main(void) {\n    long long a, b;\n    scanf(\"%lld %lld\", &a, &b);\n"
-         "    /* print the sum */\n    return 0;\n}\n",
-    "cpp": "#include <iostream>\nusing namespace std;\n\nint main() {\n    long long a, b;\n    cin >> a >> b;\n"
-           "    // print the sum\n    return 0;\n}\n",
-    "java": "import java.util.Scanner;\n\npublic class Main {\n    public static void main(String[] args) {\n"
-            "        Scanner in = new Scanner(System.in);\n        long a = in.nextLong(), b = in.nextLong();\n"
-            "        // print the sum\n    }\n}\n",
-}
 
 
 _SQL_SCHEMA = (
@@ -129,12 +119,6 @@ _FUNC_REFERENCE = """def two_sum(nums, target):
 _FUNC_TESTS = [([[2, 7, 11, 15], 9], True), ([[3, 2, 4], 6], True), ([[3, 3], 6], False),
                ([[-1, -2, -3, -4, -5], -8], False), ([list(range(10000)), 19997], False)]
 
-_ML_STARTER = """def solve(train_csv, test_csv):
-    # train_csv: CSV text with columns hours, attendance, passed
-    # test_csv:  CSV text with columns hours, attendance (no 'passed')
-    # Return one prediction (0 or 1) per row of test_csv.
-    return []
-"""
 
 
 def _ml_csv(seed: int, rows: int) -> str:
@@ -237,8 +221,9 @@ async def seed_demo_data(db: AsyncSession, cipher: FieldCipher) -> dict[str, str
                  ("1000000000 1000000000\n", "2000000000\n", False), ("-7 -8\n", "-15\n", False)]
         q = await _demo_question(db, cipher, subject, prof, tests=cases, reference=_REFERENCE,
                                  reference_language="python3", title="Sum of two numbers",
-                                 statement_md="Read two integers **a** and **b** and print **a + b**.",
-                                 difficulty=Difficulty.easy, tags=["basics"], marks=10, starter_code=_STARTER)
+                                 statement_md="Read two integers **a** and **b** from one line (separated by a "
+                                              "space) and print **a + b**.",
+                                 difficulty=Difficulty.easy, tags=["basics"], marks=10)
         exam = await _demo_exam(db, subject, prof, q, "Python practical (demo)", ["python3"])
         created["Python exam (Python only)"] = str(exam.id)
 
@@ -256,8 +241,7 @@ async def seed_demo_data(db: AsyncSession, cipher: FieldCipher) -> dict[str, str
                                               "their **department** name.\n\nTables: `employees(id, name, salary, "
                                               "dept_id)`, `departments(id, name)`.",
                                  difficulty=Difficulty.easy, tags=["joins"], marks=10, grader="sql",
-                                 grader_config=grader_config,
-                                 starter_code={"sql": "SELECT\n  -- your query\n"})
+                                 grader_config=grader_config)
         exam = await _demo_exam(db, subject, prof, q, "SQL practical (demo)", ["sql"])
         created["SQL exam"] = str(exam.id)
 
@@ -273,15 +257,17 @@ async def seed_demo_data(db: AsyncSession, cipher: FieldCipher) -> dict[str, str
             cases.append((stdin, labels, sample))
         q = await _demo_question(db, cipher, subject, prof, tests=cases, reference=_ML_REFERENCE,
                                  reference_language="python3-ml", title="Will the student pass?",
-                                 statement_md="Train on `hours` and `attendance` to predict `passed` (0/1). "
-                                              "Full marks at accuracy 0.85, half marks at 0.70.",
+                                 statement_md="Write `solve(train_csv, test_csv)`. `train_csv` is CSV text with the "
+                                              "columns `hours`, `attendance`, `passed`; `test_csv` has `hours` and "
+                                              "`attendance` only. Return one prediction (0 or 1) per row of "
+                                              "`test_csv`. Full marks at accuracy 0.85, half marks at 0.70.",
                                  difficulty=Difficulty.medium, tags=["classification"], marks=20, grader="ml",
-                                 grader_config=config, starter_code={"python3-ml": _ML_STARTER})
+                                 grader_config=config)
         exam = await _demo_exam(db, subject, prof, q, "ML practical (demo)", ["python3-ml"])
         created["ML exam"] = str(exam.id)
 
-    # 4. DSA lab: a function question (LeetCode style). No starter code is stored, so
-    #    students see the default `def two_sum(nums, target):` from the grader.
+    # 4. DSA lab: a function question (LeetCode style). The editor starts empty and the
+    #    student may name the function anything; only whether it works counts.
     subject = await _demo_subject(db, code="DEMO-DSA-LAB", name="Data Structures Lab (demo)", dept=dept, prof=prof,
                                   batch=batch, languages=["python3"])
     if subject:
@@ -290,12 +276,13 @@ async def seed_demo_data(db: AsyncSession, cipher: FieldCipher) -> dict[str, str
         cases = [(json.dumps(args), json.dumps(namespace["two_sum"](*args)), sample) for args, sample in _FUNC_TESTS]
         q = await _demo_question(db, cipher, subject, prof, tests=cases, reference=_FUNC_REFERENCE,
                                  reference_language="python3", title="Two sum",
-                                 statement_md="Write `two_sum(nums, target)` that **returns** the indices `[i, j]` "
-                                              "(i < j) of the two numbers in `nums` that add up to `target`. "
-                                              "Exactly one pair exists. Return the list; do not print it.",
+                                 statement_md="Write a function that takes a list `nums` and a number `target` and "
+                                              "**returns** the indices `[i, j]` (i < j) of the two numbers that add "
+                                              "up to `target`. Exactly one pair exists. Return the list; do not "
+                                              "print it.",
                                  difficulty=Difficulty.easy, tags=["arrays", "hashing"], marks=10, grader="function",
                                  grader_config=get_grader("function").validate_config(
-                                     {"function_name": "two_sum", "params": ["nums", "target"], "compare": "exact"}))
+                                     {"params": ["nums", "target"], "compare": "exact"}))
         exam = await _demo_exam(db, subject, prof, q, "DSA practical (demo)", ["python3"])
         created["Function-question exam"] = str(exam.id)
 

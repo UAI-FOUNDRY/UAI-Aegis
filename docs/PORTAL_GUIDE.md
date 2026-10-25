@@ -39,7 +39,8 @@ All paths below start with `/api/v1`.
 
 **Question editor** (recommended flow, show it as steps)
 1. `POST /subjects/{id}/questions` with statement (Markdown), difficulty, tags, marks,
-   starter code per language, and the reference solution + its language.
+   and the reference solution + its language. (`starter_code` exists but leave it out
+   of the form: the students' editor should start empty.)
 2. `POST /questions/{id}/tests` with inputs (expected outputs optional), sample toggle,
    group and weight.
 3. `POST /questions/{id}/generate-outputs`: the reference solution writes every expected
@@ -57,12 +58,16 @@ All paths below start with `/api/v1`.
   `sql`, then generate outputs as usual.
 
 **Function questions** (grader `function`, languages Python or JavaScript)
-- LeetCode-style: students write only a function, e.g. `def two_sum(nums, target)`,
-  and **return** the answer. No input parsing or printing.
-- `grader_config`: `function_name` (default `solve`), `params` (e.g. `["nums",
-  "target"]`; students get a matching empty function as starter code, and every test
-  must have that many arguments), `compare` (`exact`, `float`, or `unordered` for a list
-  in any order), `tolerance`.
+- LeetCode-style: students write a function and **return** the answer. No input
+  parsing or printing. The function's **name does not matter**: the grader finds the
+  student's function (helpers and `class Solution` style included) and calls it with
+  each test's arguments; only whether it works decides the marks.
+- `grader_config`: `params` (e.g. `["nums", "target"]`; every test must have that many
+  arguments), `compare` (`exact`, `float`, or `unordered` for a list in any order),
+  `tolerance`, and optionally `function_name` (used first if the student has a function
+  with that name).
+- Students start with an **empty editor**; describe the inputs and the expected return
+  value in the statement.
 - A test's input is the **arguments as a JSON list**: `[[2, 7, 11, 15], 9]`. Expected
   outputs are the return value as JSON (`[0, 1]`); normally generate them from the
   reference solution. Bad JSON or the wrong number of arguments is refused with

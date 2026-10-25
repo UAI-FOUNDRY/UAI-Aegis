@@ -95,6 +95,12 @@ Penalties for misconduct are not automatic; the professor decides.
 - **Admins** manage accounts, subjects and grants but cannot read questions, tests or
   answers, and grants can only be given to professors.
 - A subject always keeps at least one owner.
+- **Datasets** (ML questions) are uploaded by professors through the portal, stored
+  encrypted on the server, and sent to students only inside API responses (sample
+  datasets) and to the sandbox (all datasets). Hidden labels never leave the server.
+  Students cannot upload files, and student code runs only in the sandbox, which has no
+  network. The app shows datasets in a read-only in-app viewer, with no download, file
+  dialogs, clickable links or remote images.
 - **Live monitor:** the WebSocket needs a ticket from `POST /exams/{id}/live-ticket`,
   which runs the normal permission check. The ticket is HMAC-signed, bound to that exam
   and that sign-in, valid for 30 seconds and usable once. While connected, the server
