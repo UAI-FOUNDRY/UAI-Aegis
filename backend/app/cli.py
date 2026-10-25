@@ -7,6 +7,7 @@
   export-openapi          write the OpenAPI contract (default ../api/openapi.json)
   verify-audit            check the audit log hash chain
   check-judge0            compare language ids with GET /languages on the Judge0 server
+  simulate                run a full simulated exam against a running server (--lab python|sql|ml|all)
 """
 
 from __future__ import annotations
@@ -127,6 +128,12 @@ def _check_judge0(_: argparse.Namespace) -> None:
         print(f"{lang.key:>12}  id {lang.judge0_id:>3}  {status}")
 
 
+def _simulate(args: argparse.Namespace) -> None:
+    from .simulate import run
+
+    sys.exit(run(args.url, args.lab))
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description="UAI Aegis tools")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -143,6 +150,10 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=_export_openapi)
     sub.add_parser("verify-audit").set_defaults(fn=_verify_audit)
     sub.add_parser("check-judge0").set_defaults(fn=_check_judge0)
+    p = sub.add_parser("simulate")
+    p.add_argument("--url", default="http://localhost:8000")
+    p.add_argument("--lab", default="all", choices=["python", "sql", "ml", "all"])
+    p.set_defaults(fn=_simulate)
     args = parser.parse_args(argv)
     args.fn(args)
 

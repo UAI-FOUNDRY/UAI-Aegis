@@ -13,6 +13,9 @@ class RateLimiter(Protocol):
     async def hit(self, key: str, limit: int, window_seconds: int) -> bool:
         """Record one attempt; return False if the limit for the window is exceeded."""
 
+    async def is_blocked(self, key: str, limit: int, window_seconds: int) -> bool:
+        """True if `limit` attempts were already recorded in the window (records nothing)."""
+
 
 class NonceStore(Protocol):
     async def use(self, key: str, ttl_seconds: int) -> bool:
@@ -34,6 +37,12 @@ class MemoryRateLimiter:
                 return False
             hits.append(now)
             return True
+
+    async def is_blocked(self, key: str, limit: int, window_seconds: int) -> bool:
+        now = time.monotonic()
+        async with self._lock:
+            hits = self._hits.get(key, deque())
+            return sum(1 for t in hits if t > now - window_seconds) >= limit
 
 
 class MemoryNonceStore:
@@ -67,6 +76,11 @@ class RedisRateLimiter:
             pipe.expire(redis_key, window_seconds + 1)
             count, _ = await pipe.execute()
         return int(count) <= limit
+
+    async def is_blocked(self, key: str, limit: int, window_seconds: int) -> bool:
+        window = int(time.time() // window_seconds)
+        count = await self._redis.get(f"aegis:rl:{key}:{window}")
+        return int(count or 0) >= limit
 
 
 class RedisNonceStore:

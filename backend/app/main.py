@@ -155,8 +155,10 @@ def create_app(settings: Settings | None = None, *, state: AppState | None = Non
     @app.exception_handler(Exception)
     async def _unexpected(request: Request, exc: Exception):
         log.exception("unhandled error (request %s)", getattr(request.state, "request_id", "-"))
-        return JSONResponse({"detail": {"code": "server_error", "message": "Something went wrong."}},
-                            status_code=500)
+        detail = {"code": "server_error", "message": "Something went wrong."}
+        if not settings.is_production:  # show the cause while developing; never in production
+            detail["error"] = f"{type(exc).__name__}: {exc}"[:300]
+        return JSONResponse({"detail": detail}, status_code=500)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:

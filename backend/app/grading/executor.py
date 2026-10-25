@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import math
 import os
+import subprocess
 import sys
 import tempfile
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -207,17 +210,60 @@ def _limits(memory_kb: int, cpu_seconds: int):  # pragma: no cover - runs in the
     return apply
 
 
-async def _read_capped(stream: asyncio.StreamReader, cap: int) -> tuple[bytes, bool]:
-    chunks: list[bytes] = []
-    size = 0
-    while True:
-        chunk = await stream.read(65536)
-        if not chunk:
-            return b"".join(chunks), False
-        size += len(chunk)
-        if size > cap:
-            return b"".join(chunks), True
-        chunks.append(chunk)
+def _child_env() -> dict[str, str]:
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONIOENCODING": "utf-8", "PYTHONHASHSEED": "0"}
+    if os.name == "nt":  # Python cannot start on Windows without these
+        for name in ("SYSTEMROOT", "SystemRoot", "TEMP", "TMP", "WINDIR"):
+            if name in os.environ:
+                env[name] = os.environ[name]
+    return env
+
+
+def _run_capped(args: list[str], stdin: bytes, cwd: str, timeout_s: float, preexec) -> tuple[int | None, bytes, bytes, bool, bool, float]:
+    """Run a program with plain threads (works on every OS and every asyncio event loop,
+    including the one uvicorn uses with --reload on Windows). Returns
+    (exit code, stdout, stderr, timed_out, output_capped, seconds)."""
+    proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            cwd=cwd, env=_child_env(), preexec_fn=preexec)
+    capped = threading.Event()
+    buffers: dict[str, bytearray] = {"out": bytearray(), "err": bytearray()}
+
+    def reader(stream, key: str) -> None:
+        while True:
+            chunk = stream.read(65536)
+            if not chunk:
+                return
+            if len(buffers[key]) + len(chunk) > OUTPUT_CAP_BYTES:
+                capped.set()
+                with contextlib.suppress(OSError):
+                    proc.kill()
+                return
+            buffers[key].extend(chunk)
+
+    def writer() -> None:
+        # A program may exit without reading its input (e.g. print(0)): ignore the broken pipe.
+        with contextlib.suppress(OSError, ValueError):
+            proc.stdin.write(stdin)
+        with contextlib.suppress(OSError, ValueError):
+            proc.stdin.close()
+
+    started = time.perf_counter()
+    threads = [threading.Thread(target=writer, daemon=True),
+               threading.Thread(target=reader, args=(proc.stdout, "out"), daemon=True),
+               threading.Thread(target=reader, args=(proc.stderr, "err"), daemon=True)]
+    for t in threads:
+        t.start()
+    timed_out = False
+    try:
+        proc.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        proc.kill()
+        proc.wait()
+    elapsed = time.perf_counter() - started
+    for t in threads:
+        t.join(timeout=2)
+    return proc.returncode, bytes(buffers["out"]), bytes(buffers["err"]), timed_out, capped.is_set(), elapsed
 
 
 class LocalDevExecutor(Executor):
@@ -242,51 +288,25 @@ class LocalDevExecutor(Executor):
                 path = Path(workdir) / (req.file_name or "main.py")
                 path.write_text(req.source, encoding="utf-8")
                 limit_s = req.time_limit_ms / 1000
-                kwargs = {}
-                if os.name == "posix":
-                    kwargs["preexec_fn"] = _limits(req.memory_limit_kb, math.ceil(limit_s) + 1)
-                started = time.perf_counter()
-                proc = await asyncio.create_subprocess_exec(
-                    sys.executable, "-I", str(path),
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=workdir,
-                    env={"PATH": "/usr/bin:/bin", "PYTHONIOENCODING": "utf-8", "PYTHONHASHSEED": "0"},
-                    **kwargs,
-                )
+                preexec = _limits(req.memory_limit_kb, math.ceil(limit_s) + 1) if os.name == "posix" else None
                 try:
-                    async def communicate():
-                        if proc.stdin:
-                            try:
-                                proc.stdin.write(req.stdin.encode("utf-8"))
-                                await proc.stdin.drain()
-                            except (BrokenPipeError, ConnectionResetError):
-                                pass
-                            proc.stdin.close()
-                        out, err = await asyncio.gather(
-                            _read_capped(proc.stdout, OUTPUT_CAP_BYTES),
-                            _read_capped(proc.stderr, OUTPUT_CAP_BYTES),
-                        )
-                        if out[1] or err[1]:
-                            proc.kill()
-                        await proc.wait()
-                        return out, err
-
-                    (out, out_capped), (err, _) = await asyncio.wait_for(communicate(), timeout=limit_s + 0.5)
-                except TimeoutError:
-                    proc.kill()
-                    await proc.wait()
-                    return ExecResult(ExecStatus.time_limit, time_ms=req.time_limit_ms)
-                elapsed_ms = int((time.perf_counter() - started) * 1000)
-                stdout = out.decode("utf-8", errors="replace")
-                stderr = err.decode("utf-8", errors="replace")
-                if out_capped:
-                    return ExecResult(ExecStatus.runtime_error, stdout, stderr, time_ms=elapsed_ms,
-                                      message="output limit exceeded")
-                if elapsed_ms > req.time_limit_ms:
-                    return ExecResult(ExecStatus.time_limit, stdout, stderr, time_ms=elapsed_ms)
-                if proc.returncode != 0:
-                    status = ExecStatus.memory_limit if "MemoryError" in stderr else ExecStatus.runtime_error
-                    return ExecResult(status, stdout, stderr, time_ms=elapsed_ms)
-                return ExecResult(ExecStatus.ok, stdout, stderr, time_ms=elapsed_ms)
+                    code, out, err, timed_out, capped, elapsed = await asyncio.to_thread(
+                        _run_capped, [sys.executable, "-I", str(path)], req.stdin.encode("utf-8"), workdir,
+                        limit_s + 0.5, preexec,
+                    )
+                except OSError as exc:
+                    return ExecResult(ExecStatus.internal_error, message=f"could not start Python: {exc}")
+        elapsed_ms = int(elapsed * 1000)
+        stdout = out.decode("utf-8", errors="replace")
+        stderr = err.decode("utf-8", errors="replace")
+        if timed_out:
+            return ExecResult(ExecStatus.time_limit, stdout, stderr, time_ms=req.time_limit_ms)
+        if capped:
+            return ExecResult(ExecStatus.runtime_error, stdout, stderr, time_ms=elapsed_ms,
+                              message="output limit exceeded")
+        if elapsed_ms > req.time_limit_ms:
+            return ExecResult(ExecStatus.time_limit, stdout, stderr, time_ms=elapsed_ms)
+        if code != 0:
+            status = ExecStatus.memory_limit if "MemoryError" in stderr else ExecStatus.runtime_error
+            return ExecResult(status, stdout, stderr, time_ms=elapsed_ms)
+        return ExecResult(ExecStatus.ok, stdout, stderr, time_ms=elapsed_ms)

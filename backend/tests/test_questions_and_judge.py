@@ -121,3 +121,33 @@ async def test_judge0_down_is_an_internal_error_not_a_crash():
     (res,) = await ex.run_batch([ExecRequest("python3", 71, "main.py", "print(1)", "", 1000, 65536)])
     await ex.aclose()
     assert res.status is ExecStatus.internal_error
+
+
+def test_local_executor_works_on_any_event_loop():
+    """Regressions: (1) uvicorn --reload on Windows uses a SelectorEventLoop, which cannot
+    start subprocesses, so every run failed with a 500; (2) under uvloop, a program that
+    exited without reading its input (print(0)) crashed grading. The runner now uses
+    threads, so it works on every loop."""
+    import asyncio
+
+    async def scenario():
+        ex = LocalDevExecutor()
+        req = dict(language_key="python3", judge0_id=71, file_name="main.py", time_limit_ms=2000,
+                   memory_limit_kb=262144)
+        return await ex.run_batch([
+            ExecRequest(source="print(0)", stdin="x" * 500_000, **req),
+            ExecRequest(source="print(sum(map(int, input().split())))", stdin="2 3\n", **req),
+        ])
+
+    factories = [asyncio.SelectorEventLoop, asyncio.new_event_loop]
+    try:
+        import uvloop
+
+        factories.append(uvloop.new_event_loop)
+    except ImportError:  # uvloop is not available on Windows
+        pass
+    for factory in factories:
+        with asyncio.Runner(loop_factory=factory) as runner:
+            ignored, summed = runner.run(scenario())
+        assert (ignored.status, ignored.stdout) == (ExecStatus.ok, "0\n"), factory
+        assert (summed.status, summed.stdout) == (ExecStatus.ok, "5\n"), factory

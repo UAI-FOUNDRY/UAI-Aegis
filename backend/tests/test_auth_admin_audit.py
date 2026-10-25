@@ -17,6 +17,16 @@ async def test_login_errors_are_identical_and_rate_limited(api):
     for _ in range(10):
         r = await c.post("/api/v1/auth/login", json={"email": user.email, "password": "wrong-password"})
     assert r.status_code == 429
+    # Even the right password is refused while blocked
+    r = await c.post("/api/v1/auth/login", json={"email": user.email, "password": PASSWORD})
+    assert r.status_code == 429
+
+
+async def test_successful_logins_are_never_rate_limited(api):
+    """A student whose app restarts many times must not be locked out."""
+    user = await api.user(Role.student)
+    for _ in range(15):
+        await api.login(user.email, client="desktop")
 
 
 async def test_logout_revokes_token_and_inactive_users_are_out(api):

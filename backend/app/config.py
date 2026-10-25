@@ -41,8 +41,8 @@ class Settings(BaseSettings):
     session_ttl_desktop_hours: int = 10
     allowed_email_domains: str = ""  # comma-separated, e.g. "uai.edu.in"; empty = any domain
     cors_origins: str = ""  # comma-separated origins of the professor portal
-    login_attempts_per_email: int = 10  # per 15 minutes
-    login_attempts_per_ip: int = 30  # per 15 minutes
+    login_attempts_per_email: int = 10  # failed attempts per 15 minutes
+    login_attempts_per_ip: int = 30  # failed attempts per 15 minutes
 
     # Student app (desktop) security
     signature_max_skew_seconds: int = 120

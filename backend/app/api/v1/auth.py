@@ -57,15 +57,18 @@ async def login(
 ) -> LoginOut:
     settings = state.settings
     ip = client_ip(request)
-    allowed_ip = await state.limiter.hit(f"login:ip:{ip}", settings.login_attempts_per_ip, 900)
-    allowed_email = await state.limiter.hit(f"login:email:{body.email}", settings.login_attempts_per_email, 900)
-    if not (allowed_ip and allowed_email):
-        raise too_many("Too many sign-in attempts. Wait 15 minutes and try again.")
+    # Only failed attempts count, so students whose app restarts are never locked out.
+    ip_key, email_key = f"login-fail:ip:{ip}", f"login-fail:email:{body.email}"
+    if await state.limiter.is_blocked(ip_key, settings.login_attempts_per_ip, 900) or \
+            await state.limiter.is_blocked(email_key, settings.login_attempts_per_email, 900):
+        raise too_many("Too many failed sign-in attempts. Wait 15 minutes and try again.")
 
     user = await db.scalar(select(User).where(User.email == body.email))
     # verify_password runs even for unknown emails, so timing does not reveal which exist.
     valid = verify_password(user.password_hash if user else None, body.password)
     if not valid or user is None or not user.is_active:
+        await state.limiter.hit(ip_key, settings.login_attempts_per_ip, 900)
+        await state.limiter.hit(email_key, settings.login_attempts_per_email, 900)
         raise unauthorized("Wrong email or password.", code="invalid_credentials")
     if needs_rehash(user.password_hash):
         user.password_hash = hash_password(body.password)

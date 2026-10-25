@@ -10,8 +10,11 @@ REDIS_URL = os.environ.get("AEGIS_TEST_REDIS_URL")
 
 
 async def _exercise(limiter, nonces):
+    assert not await limiter.is_blocked("k", 3, 60)
     assert [await limiter.hit("k", 3, 60) for _ in range(4)] == [True, True, True, False]
+    assert await limiter.is_blocked("k", 3, 60)
     assert await limiter.hit("other", 3, 60)
+    assert not await limiter.is_blocked("other", 3, 60)
     assert await nonces.use("n1", 60) is True
     assert await nonces.use("n1", 60) is False
     assert await nonces.use("n2", 60) is True
