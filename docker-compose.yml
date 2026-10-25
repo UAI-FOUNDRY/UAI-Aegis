@@ -1,0 +1,86 @@
+# UAI Aegis local development stack.
+#
+#   cp .env.example .env
+#   docker compose up --build                     # API + PostgreSQL + Redis
+#   docker compose --profile judge up --build     # ...plus the Judge0 code sandbox
+#
+# The API is on http://localhost:8000 (interactive docs at /docs).
+
+name: uai-aegis
+
+services:
+  db:
+    image: postgres:16.4
+    environment:
+      POSTGRES_DB: aegis
+      POSTGRES_USER: aegis
+      POSTGRES_PASSWORD: ${AEGIS_DB_PASSWORD:-aegis-dev-only}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"  # reachable from this machine only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aegis -d aegis"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.4
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    env_file: .env
+    environment:
+      AEGIS_DATABASE_URL: postgresql+asyncpg://aegis:${AEGIS_DB_PASSWORD:-aegis-dev-only}@db:5432/aegis
+      AEGIS_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  # ---------------------------------------------------------------- Judge0 sandbox
+  # Judge0 runs student code inside isolate boxes (no network, CPU/memory limits).
+  # It needs privileged containers and, for version 1.13, cgroup v1 on the host:
+  # see judge/README.md before starting it.
+  judge0:
+    image: judge0/judge0:1.13.1
+    profiles: ["judge"]
+    volumes:
+      - ./judge/judge0.conf:/judge0.conf:ro
+    privileged: true
+    depends_on: [judge0-db, judge0-redis]
+    # No published port: only the API talks to Judge0, over the compose network.
+
+  judge0-workers:
+    image: judge0/judge0:1.13.1
+    profiles: ["judge"]
+    command: ["./scripts/workers"]
+    volumes:
+      - ./judge/judge0.conf:/judge0.conf:ro
+    privileged: true
+    depends_on: [judge0-db, judge0-redis]
+
+  judge0-db:
+    image: postgres:16.4
+    profiles: ["judge"]
+    env_file: ./judge/judge0.conf
+    volumes:
+      - judge0-db-data:/var/lib/postgresql/data
+
+  judge0-redis:
+    image: redis:7.4
+    profiles: ["judge"]
+    command: ["bash", "-c", "docker-entrypoint.sh --appendonly no --requirepass \"$$REDIS_PASSWORD\""]
+    env_file: ./judge/judge0.conf
+
+volumes:
+  db-data:
+  judge0-db-data:

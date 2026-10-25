@@ -1,0 +1,28 @@
+# Secrets
+.env
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+
+# Node / Tauri (desktop and portal)
+node_modules/
+dist/
+target/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

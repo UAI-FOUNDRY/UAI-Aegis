@@ -1,0 +1,45 @@
+name: backend
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.4
+        env:
+          POSTGRES_DB: aegis_test
+          POSTGRES_USER: aegis
+          POSTGRES_PASSWORD: aegis-ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U aegis -d aegis_test" --health-interval 5s --health-retries 10
+      redis:
+        image: redis:7.4
+        ports: ["6379:6379"]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check --select F,E9,B,UP,SIM,I --ignore B008,UP017,SIM108,B904,UP040,SIM102 app tests alembic
+      - name: Tests (SQLite)
+        run: pytest -q
+      - name: Tests (PostgreSQL + Redis)
+        env:
+          AEGIS_TEST_DATABASE_URL: postgresql+asyncpg://aegis:aegis-ci@localhost:5432/aegis_test
+          AEGIS_TEST_REDIS_URL: redis://localhost:6379/0
+        run: pytest -q
+      - name: OpenAPI contract is up to date
+        run: |
+          python -m app.cli export-openapi --out /tmp/openapi.json
+          diff -q /tmp/openapi.json ../api/openapi.json || (echo "Run: python -m app.cli export-openapi" && exit 1)
