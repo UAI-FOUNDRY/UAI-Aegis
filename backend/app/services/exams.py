@@ -34,6 +34,7 @@ from ..models import (
 )
 from ..security.crypto import AAD, FieldCipher
 from . import audit
+from .live import notify
 from .proctoring import effective_policy
 
 if TYPE_CHECKING:
@@ -257,7 +258,9 @@ async def grade_session(state: AppState, session_id: uuid.UUID) -> None:
             if session is None or session.grading_status in ("running", "done"):
                 return
             session.grading_status = "running"
+            exam_id = session.exam_id
             await db.commit()
+        await notify(state, exam_id, "grading", session_id)
 
         any_error = False
         try:
@@ -312,6 +315,7 @@ async def grade_session(state: AppState, session_id: uuid.UUID) -> None:
                 if session is not None:
                     session.grading_status = "error"
                     await db.commit()
+        await notify(state, exam_id, "graded", session_id)
 
 
 async def sweep_expired(state: AppState) -> int:
@@ -344,6 +348,7 @@ async def sweep_expired(state: AppState) -> int:
                 )
                 await db.commit()
                 finished.append(session.id)
+                await notify(state, exam.id, "submitted", session.id)
     for session_id in finished:
         state.tasks.spawn(grade_session(state, session_id))
     return len(finished)

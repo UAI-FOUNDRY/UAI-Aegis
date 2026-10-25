@@ -295,6 +295,18 @@ def _test_out(state: AppState, t: TestCase, full: bool = False) -> TestOut | Tes
     return TestFull(**base, input=text_in, expected_output=text_out) if full else TestOut(**base)
 
 
+def _check_test(question: Question, text_in: str, expected: str | None, label: str) -> str | None:
+    """Let the question type check a test as it is saved (e.g. function questions take a
+    JSON list of arguments). Returns the expected output, possibly normalised."""
+    grader = get_grader(question.grader)
+    try:
+        config = grader.validate_config(question.grader_config or {})
+        grader.validate_test_input(text_in, config)
+        return grader.validate_expected(expected, config) if expected is not None else None
+    except ValueError as exc:
+        raise bad_request("bad_test", f"{label}: {exc}") from None
+
+
 async def _record(db, state: AppState, user: User, action: str, question: Question, details=None):
     await audit.record(db, state.settings.audit_key_bytes, actor=user, action=action, target_type="question",
                        target_id=question.id, details={"subject_id": str(question.subject_id), **(details or {})})
@@ -418,6 +430,8 @@ async def add_tests(question_id: uuid.UUID, body: TestsIn, state: AppState = Dep
     for t in body.tests:
         _check_size(state, t.input, limit, "A test input")
         _check_size(state, t.expected_output, limit, "An expected output")
+    for n, t in enumerate(body.tests, start=1):
+        t.expected_output = _check_test(question, t.input, t.expected_output, f"Test {n} in this upload")
     start = (await db.scalar(select(func.max(TestCase.ordinal)).where(TestCase.question_id == question.id))) or 0
     created = []
     for i, t in enumerate(body.tests, start=1):
@@ -443,6 +457,13 @@ async def update_test(question_id: uuid.UUID, test_id: uuid.UUID, body: TestPatc
     if test is None or test.question_id != question.id:
         raise not_found()
     changes = body.model_dump(exclude_unset=True)
+    if "input" in changes or changes.get("expected_output") is not None:
+        current_input = changes.get("input")
+        if current_input is None:
+            current_input = state.cipher.decrypt_str(test.input_enc, AAD.test_input(test.id))
+        checked = _check_test(question, current_input, changes.get("expected_output"), f"Test {test.ordinal}")
+        if changes.get("expected_output") is not None:
+            changes["expected_output"] = checked
     if "input" in changes:
         _check_size(state, changes["input"], state.settings.max_test_bytes, "A test input")
         test.input_enc = state.cipher.encrypt(changes["input"], AAD.test_input(test.id))

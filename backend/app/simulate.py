@@ -3,10 +3,11 @@ will use it, and check every step.
 
     uvicorn app.main:app --reload            # terminal 1
     python -m app.cli simulate               # terminal 2 (needs `demo-data` first)
-    python -m app.cli simulate --lab sql     # python | sql | ml | all
+    python -m app.cli simulate --lab sql     # python | sql | ml | function | all
 
 What happens (a fresh exam is created each run, so you can repeat it):
-  Professor  opens the exam and reads the access code.
+  Professor  opens the exam, reads the access code and opens the live monitor
+             (WebSocket), which must show every change within a moment.
   Student 1  answers correctly, runs the sample tests and hands in.
   Student 2  switches windows three times -> locked; the professor resumes them with
              5 extra minutes; they hand in a wrong answer.
@@ -20,7 +21,9 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,7 +32,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
 
 from .security.signing import DeviceSigner
-from .seed import _ML_REFERENCE, _REFERENCE, _SQL_REFERENCE, DEMO_PASSWORD
+from .seed import _FUNC_REFERENCE, _ML_REFERENCE, _REFERENCE, _SQL_REFERENCE, DEMO_PASSWORD
 
 KEY_DIR = Path(".aegis-sim")  # demo students' device keys, reused between runs
 
@@ -39,11 +42,57 @@ LABS = {
                 wrong="SELECT name, 'x' FROM employees;"),
     "ml": dict(subject="DEMO-ML-LAB", language="python3-ml", good=_ML_REFERENCE,
                wrong="def solve(train_csv, test_csv):\n    return [0] * (len(test_csv.splitlines()) - 1)\n"),
+    "function": dict(subject="DEMO-DSA-LAB", language="python3", good=_FUNC_REFERENCE,
+                     wrong="def two_sum(nums, target):\n    return [0, 1]\n", starter="def two_sum(nums, target):"),
 }
 
 
 class SimulationFailed(Exception):
     pass
+
+
+class LiveWatch:
+    """The professor portal's live monitor: a WebSocket that collects pushed messages."""
+
+    def __init__(self, url: str) -> None:
+        self.messages: list[tuple[float, dict]] = []
+        self._lock = threading.Lock()
+        self._ready = threading.Event()
+        self._error: Exception | None = None
+        self.ws = None
+        threading.Thread(target=self._read, args=(url,), daemon=True).start()
+        if not self._ready.wait(15) or self._error is not None:
+            raise SimulationFailed(f"live monitor WebSocket did not connect: {self._error or 'timeout'}")
+
+    def _read(self, url: str) -> None:
+        from websockets.sync.client import connect
+
+        try:
+            with connect(url, open_timeout=10) as ws:
+                self.ws = ws
+                self._ready.set()
+                for raw in ws:
+                    with self._lock:
+                        self.messages.append((time.monotonic(), json.loads(raw)))
+        except Exception as exc:  # closed, or could not connect
+            if not self._ready.is_set():
+                self._error = exc
+                self._ready.set()
+
+    def wait_for(self, match: Callable[[dict], bool], timeout: float = 5.0) -> float | None:
+        """Arrival time of the first message that matches, or None."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                for arrived, message in self.messages:
+                    if match(message):
+                        return arrived
+            time.sleep(0.02)
+        return None
+
+    def close(self) -> None:
+        if self.ws is not None:
+            self.ws.close()
 
 
 @dataclass
@@ -56,6 +105,7 @@ class Student:
 class Sim:
     def __init__(self, url: str) -> None:
         self.http = httpx.Client(base_url=url.rstrip("/"), timeout=120)
+        self.ws_url = "ws" + url.rstrip("/")[len("http"):]  # http -> ws, https -> wss
         self.failures = 0
         self._sessions: dict[str, object] = {}  # sign in once per run, like the real apps
 
@@ -129,6 +179,16 @@ class Sim:
         self.check(readiness["ready"], "exam passes the readiness check", "; ".join(readiness["problems"]))
         code = self.call("POST", f"/api/v1/exams/{exam_id}/open", prof)["access_code"]
         self.check(bool(code), f"professor opened the exam, access code {code}")
+        ticket = self.call("POST", f"/api/v1/exams/{exam_id}/live-ticket", prof)
+        live = LiveWatch(self.ws_url + ticket["path"])
+        try:
+            self._run_exam(lab, exam_id, code, prof, live)
+        finally:
+            live.close()
+
+    def _run_exam(self, lab: dict, exam_id: str, code: str, prof: dict, live: LiveWatch) -> None:
+        self.check(live.wait_for(lambda m: m["type"] == "snapshot") is not None,
+                   "live monitor connected and received the class list")
 
         s1, s2, s3 = (self.student(f"student{i}.demo@aegis.local") for i in (1, 2, 3))
         start = f"/api/v1/student/exams/{exam_id}/start"
@@ -140,6 +200,11 @@ class Sim:
         (question,) = view["questions"]
         langs = [lang["key"] for lang in question["languages"]]
         self.check(langs == [lab["language"]], f"only {lab['language']} is offered", str(langs))
+        if "starter" in lab:
+            starter = question["starter_code"].get(lab["language"], "")
+            self.check(starter.startswith(lab["starter"]), f"student sees the starter `{lab['starter']}`", starter)
+        self.check(live.wait_for(lambda m: m["type"] == "row" and m["data"]["student"]["email"] == s1.email) is not None,
+                   "live monitor showed student 1 starting")
         sessions = {s1.email: view["session_id"]}
         for s in (s2, s3):
             sessions[s.email] = self.signed(s, "POST", start, {"access_code": code}).json()["session_id"]
@@ -175,9 +240,14 @@ class Sim:
         self.signed(s2, "POST", f"{base(s2)}/finish")
 
         # Student 3: severe event -> lock -> terminated
+        sent = time.monotonic()
         status = self.signed(s3, "POST", f"{base(s3)}/events",
                              {"events": [{"kind": "remote_desktop_detected", "details": {"process": "anydesk.exe"}}]}).json()
         self.check(status.get("lock_reason") == "remote_desktop_detected", "student 3 locked at once (remote desktop)")
+        arrived = live.wait_for(lambda m: m["type"] == "row" and m["data"]["student"]["email"] == s3.email
+                                and m["data"]["status"] == "locked")
+        self.check(arrived is not None,
+                   f"live monitor showed student 3's lock in {((arrived or sent) - sent) * 1000:.0f} ms (no refresh)")
         self.call("POST", f"/api/v1/exams/{exam_id}/sessions/{sessions[s3.email]}/terminate", prof,
                   {"reason": "Remote desktop software running"})
 

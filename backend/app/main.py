@@ -25,6 +25,7 @@ from .grading.executor import Executor, Judge0Executor, LocalDevExecutor
 from .security.crypto import DecryptionError, FieldCipher
 from .security.stores import MemoryNonceStore, MemoryRateLimiter, RedisNonceStore, RedisRateLimiter
 from .services.exams import sweeper_loop
+from .services.live import LiveHub
 from .state import AppState
 
 log = logging.getLogger("aegis")
@@ -90,6 +91,7 @@ def build_state(settings: Settings, executor: Executor | None = None) -> AppStat
         limiter=limiter,
         nonces=nonces,
         redis=redis,
+        live=LiveHub(redis),
     )
 
 
@@ -109,6 +111,7 @@ def create_app(settings: Settings | None = None, *, state: AppState | None = Non
                 with contextlib.suppress(asyncio.CancelledError):
                     await sweeper
             await state.tasks.drain()
+            await state.live.aclose()
             await state.executor.aclose()
             if state.redis is not None:
                 await state.redis.aclose()

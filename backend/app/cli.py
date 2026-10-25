@@ -7,7 +7,7 @@
   export-openapi          write the OpenAPI contract (default ../api/openapi.json)
   verify-audit            check the audit log hash chain
   check-judge0            compare language ids with GET /languages on the Judge0 server
-  simulate                run a full simulated exam against a running server (--lab python|sql|ml|all)
+  simulate                run a full simulated exam against a running server (--lab python|sql|ml|function|all)
 """
 
 from __future__ import annotations
@@ -152,7 +152,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("check-judge0").set_defaults(fn=_check_judge0)
     p = sub.add_parser("simulate")
     p.add_argument("--url", default="http://localhost:8000")
-    p.add_argument("--lab", default="all", choices=["python", "sql", "ml", "all"])
+    p.add_argument("--lab", default="all", choices=["python", "sql", "ml", "function", "all"])
     p.set_defaults(fn=_simulate)
     args = parser.parse_args(argv)
     args.fn(args)

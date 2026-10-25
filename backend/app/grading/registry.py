@@ -12,6 +12,10 @@ The hooks:
                    the sandbox, so hidden expected outputs and labels never reach it)
 - expected_from_output: what to store as the expected output when a reference
                    solution's run is used to generate it
+- validate_test_input / validate_expected: check a test a professor types in (e.g.
+                   function questions need JSON arguments), so mistakes show up when
+                   the test is saved instead of during the exam
+- default_starter: starter code students see when the professor wrote none
 """
 
 from __future__ import annotations
@@ -151,6 +155,18 @@ class Grader(ABC):
 
     def expected_from_output(self, stdout: str, config: dict[str, Any]) -> str:
         return stdout
+
+    def validate_test_input(self, text: str, config: dict[str, Any]) -> None:  # noqa: B027 - optional hook
+        """Raise ValueError if a test input cannot be used with this question type."""
+        return None
+
+    def validate_expected(self, text: str, config: dict[str, Any]) -> str:
+        """Check (and normalise) an expected output typed by a professor."""
+        return text
+
+    def default_starter(self, language_key: str, config: dict[str, Any]) -> str | None:
+        """Starter code shown to students when the question has none for this language."""
+        return None
 
     @abstractmethod
     def check(self, test: TestSpec, result: ExecResult, config: dict[str, Any]) -> Check:

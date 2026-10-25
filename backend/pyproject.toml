@@ -8,7 +8,12 @@ requires-python = ">=3.12,<3.14"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-filterwarnings = ["error::pytest.PytestUnraisableExceptionWarning"]
+filterwarnings = [
+    "error::pytest.PytestUnraisableExceptionWarning",
+    # uvicorn 0.34 still uses the websockets "legacy" server API; harmless
+    "ignore::DeprecationWarning:websockets.*",
+    "ignore::DeprecationWarning:uvicorn.*",
+]
 
 [tool.ruff]
 line-length = 120

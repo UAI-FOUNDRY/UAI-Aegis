@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     max_test_bytes: int = 2 * 1024 * 1024
     max_body_bytes: int = 8 * 1024 * 1024
 
+    # Live monitor (WebSocket push to the professor portal)
+    live_ticket_seconds: int = 30  # a ticket must be used within this time, once
+    live_refresh_seconds: float = 10.0  # full refresh + permission re-check this often
+    live_max_connections_per_user: int = 10
+
     # Background jobs
     sweeper_enabled: bool = True
     sweeper_interval_seconds: float = 15.0

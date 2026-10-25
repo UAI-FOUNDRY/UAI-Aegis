@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...errors import ApiError, bad_request, conflict, forbidden, not_found, too_many
+from ...grading import get_grader
 from ...grading.registry import Verdict
 from ...models import (
     Answer,
@@ -60,6 +61,7 @@ from ...services.exams import (
     pick_questions,
     time_limit_for,
 )
+from ...services.live import notify
 from ...services.proctoring import EVENT_KIND, ExamPolicy, apply_event, effective_policy, lock
 from ...state import AppState
 from ..deps import get_db, get_state, require_student, signed_device
@@ -297,6 +299,7 @@ async def _time_up(db: AsyncSession, state: AppState, session: ExamSession) -> N
     if await finalize_session(db, state.cipher, session, "time_up"):
         await _record(db, state, None, "session.auto_submitted", session, {"reason": session.finish_reason})
         await db.commit()
+        await notify(state, session.exam_id, "submitted", session.id)
         state.tasks.spawn(grade_session(state, session.id))
 
 
@@ -310,6 +313,7 @@ async def _ensure_writable(db: AsyncSession, state: AppState, session: ExamSessi
         if await finalize_session(db, state.cipher, session, "exam_closed"):
             await _record(db, state, None, "session.auto_submitted", session, {"reason": "exam_closed"})
             await db.commit()
+            await notify(state, session.exam_id, "submitted", session.id)
             state.tasks.spawn(grade_session(state, session.id))
         raise conflict("session_finished", "Your exam has ended.")
     if past_deadline(session, exam, utcnow()):
@@ -361,6 +365,22 @@ async def _receipts(db: AsyncSession, session: ExamSession) -> list[Receipt]:
     return [Receipt(question_id=a.question_id, receipt=a.receipt) for a in answers]
 
 
+def _starters(question: Question, langs: list[Language]) -> dict[str, str]:
+    """The professor's starter code, or the question type's default (e.g. an empty
+    `def solve(nums, target):` for function questions)."""
+    grader = get_grader(question.grader)
+    try:
+        config = grader.validate_config(question.grader_config or {})
+    except ValueError:
+        config = {}
+    out = {}
+    for lang in langs:
+        code = (question.starter_code or {}).get(lang.key) or grader.default_starter(lang.key, config)
+        if code:
+            out[lang.key] = code
+    return out
+
+
 async def _view(db: AsyncSession, state: AppState, session: ExamSession, exam: Exam, device: Device) -> SessionView:
     now = utcnow()
     policy = effective_policy(exam.policy)
@@ -382,7 +402,7 @@ async def _view(db: AsyncSession, state: AppState, session: ExamSession, exam: E
                 marks=q.marks,
                 languages=[LanguageBrief(key=lang.key, name=lang.name, monaco_id=lang.monaco_id) for lang in langs],
                 time_limits_ms={lang.key: time_limit_for(q, lang, state.settings) for lang in langs},
-                starter_code={k: v for k, v in (q.starter_code or {}).items() if k in {lang.key for lang in langs}},
+                starter_code=_starters(q, langs),
                 samples=[SampleOut(ordinal=s.ordinal, input=s.input, expected_output=s.expected or "")
                          for s in samples],
                 hidden_test_count=hidden or 0,
@@ -510,6 +530,7 @@ async def start_exam(exam_id: uuid.UUID, body: StartIn, state: AppState = Depend
             await _record(db, state, user, "session.device_change_requested", session,
                           {"device_id": str(device.id)})
             await db.commit()
+            await notify(state, exam.id, "device_change", session.id)
         elif session.status not in FINISHED and past_deadline(session, exam, utcnow()):
             await _time_up(db, state, session)
         return await _view(db, state, session, exam, device)
@@ -554,6 +575,7 @@ async def start_exam(exam_id: uuid.UUID, body: StartIn, state: AppState = Depend
         db.add(SessionQuestion(session_id=session.id, question_id=qid, ordinal=ordinal))
     await _record(db, state, user, "session.started", session, {"device_id": str(device.id)})
     await db.commit()
+    await notify(state, exam.id, "started", session.id)
     return await _view(db, state, session, exam, device)
 
 
@@ -657,8 +679,11 @@ async def heartbeat(session_id: uuid.UUID, body: HeartbeatIn, state: AppState = 
     session, exam = await _session_for(db, user, device, session_id, allow_pending=True)
     policy = effective_policy(exam.policy)
     now = utcnow()
+    reconnected = False
     if session.device_id == device.id:
         gap = (now - session.last_heartbeat_at).total_seconds() if session.last_heartbeat_at else 0
+        reconnected = session.status not in FINISHED and (
+            session.last_heartbeat_at is None or gap > policy.heartbeat_timeout_seconds)
         if session.status == SessionStatus.active and gap > policy.heartbeat_timeout_seconds:
             db.add(apply_event(session, policy, kind="heartbeat_gap", source="server",
                                details={"seconds": int(gap)}))
@@ -669,6 +694,8 @@ async def heartbeat(session_id: uuid.UUID, body: HeartbeatIn, state: AppState = 
     if session.status not in FINISHED and past_deadline(session, exam, now):
         await _time_up(db, state, session)
     await db.commit()
+    if reconnected:  # routine heartbeats are not pushed; only "this student is back"
+        await notify(state, exam.id, "connected", session.id)
     return _status(session, policy, now)
 
 
@@ -681,6 +708,7 @@ async def report_events(session_id: uuid.UUID, body: EventsIn, state: AppState =
     session, exam = await _session_for(db, user, device, session_id, allow_pending=True)
     policy = effective_policy(exam.policy)
     was_active = session.status == SessionStatus.active
+    strikes_before = session.strikes
     for item in body.events:
         if not EVENT_KIND.match(item.kind):
             raise bad_request("bad_event_kind", "Event kinds are lower_snake_case, max 48 characters.")
@@ -691,10 +719,14 @@ async def report_events(session_id: uuid.UUID, body: EventsIn, state: AppState =
             details["from_pending_device"] = True
         db.add(apply_event(session, policy, kind=item.kind, source="client", details=details,
                            client_ts=item.client_ts))
-    if was_active and session.status == SessionStatus.locked:
+    locked_now = was_active and session.status == SessionStatus.locked
+    if locked_now:
         await _record(db, state, None, "session.locked", session,
                       {"reason": session.lock_reason, "strikes": session.strikes})
     await db.commit()
+    if body.events:
+        change = "locked" if locked_now else "strike" if session.strikes != strikes_before else "event"
+        await notify(state, exam.id, change, session.id)
     return _status(session, policy, utcnow())
 
 
@@ -711,6 +743,7 @@ async def finish_exam(session_id: uuid.UUID, state: AppState = Depends(get_state
     await finalize_session(db, state.cipher, session, "submitted")
     await _record(db, state, user, "session.submitted", session)
     await db.commit()
+    await notify(state, exam.id, "submitted", session.id)
     state.tasks.spawn(grade_session(state, session.id))
     return FinishOut(status=session.status, receipts=await _receipts(db, session))
 

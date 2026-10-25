@@ -13,6 +13,7 @@ from .config import Settings
 from .grading.executor import Executor
 from .security.crypto import FieldCipher
 from .security.stores import NonceStore, RateLimiter
+from .services.live import LiveHub
 
 
 class TaskRunner:
@@ -46,3 +47,5 @@ class AppState:
     tasks: TaskRunner = field(default_factory=TaskRunner)
     # At most this many sessions are graded at once (Judge0 has its own concurrency limit too).
     grading_slots: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(4))
+    # Live monitor push (in memory, or Redis pub/sub when Redis is configured).
+    live: LiveHub = field(default_factory=LiveHub)

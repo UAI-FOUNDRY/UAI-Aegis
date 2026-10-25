@@ -41,6 +41,7 @@ from ...security.crypto import AAD
 from ...security.tokens import new_access_code
 from ...services import audit
 from ...services.authz import Cap, caps_for, require_cap
+from ...services.live import notify
 from ...services.exams import (
     Marking,
     Selection,
@@ -408,6 +409,20 @@ async def _session_in_exam(db: AsyncSession, exam: Exam, session_id: uuid.UUID, 
     return session
 
 
+def _first_bad_input(grader, question: Question, tests) -> str | None:
+    """e.g. a function question whose test inputs are not JSON argument lists."""
+    try:
+        config = grader.validate_config(question.grader_config or {})
+    except ValueError as exc:
+        return f"has an invalid grader setting: {exc}"
+    for t in tests:
+        try:
+            grader.validate_test_input(t.input, config)
+        except ValueError as exc:
+            return f"test {t.ordinal}: {exc}"
+    return None
+
+
 async def check_ready(db: AsyncSession, state: AppState, exam: Exam) -> ReadinessOut:
     problems: list[str] = []
     warnings: list[str] = []
@@ -434,11 +449,15 @@ async def check_ready(db: AsyncSession, state: AppState, exam: Exam) -> Readines
         if not await languages_for_question(db, q, exam):
             locked = f" in {', '.join(exam.languages)}" if exam.languages else ""
             problems.append(f"{name} cannot be answered{locked}. Check the question's and the exam's languages.")
-        if q.reference_enc and q.reference_language and counts[0] and not missing_expected:
+        tests = await load_tests(db, state.cipher, q.id) if counts[0] else []
+        bad_input = _first_bad_input(grader, q, tests)
+        if bad_input:
+            problems.append(f"{name} {bad_input}")
+        elif q.reference_enc and q.reference_language and counts[0] and not missing_expected:
             lang = await db.scalar(select(Language).where(Language.key == q.reference_language, Language.is_enabled))
             if lang is not None:
                 result = await grade_code(state, q, lang, state.cipher.decrypt_str(q.reference_enc, AAD.reference(q.id)),
-                                          await load_tests(db, state.cipher, q.id))
+                                          tests)
                 if result.fraction < 1:
                     problems.append(f"{name}: the reference solution fails some tests.")
         elif not q.reference_enc:
@@ -570,6 +589,7 @@ async def open_exam(exam_id: uuid.UUID, state: AppState = Depends(get_state),
     exam.updated_at = exam.opened_at
     await _record(db, state, user, "exam.opened", "exam", exam.id)
     await db.commit()
+    await notify(state, exam.id, "exam_opened")
     return await _exam_out(db, state, exam, caps)
 
 
@@ -604,6 +624,7 @@ async def close_exam(exam_id: uuid.UUID, state: AppState = Depends(get_state),
             finished.append(session.id)
     await _record(db, state, user, "exam.closed", "exam", exam.id, {"auto_submitted": len(finished)})
     await db.commit()
+    await notify(state, exam.id, "exam_closed")
     for session_id in finished:
         state.tasks.spawn(grade_session(state, session_id))
     return await _exam_out(db, state, exam, caps)
@@ -635,6 +656,7 @@ async def regrade(exam_id: uuid.UUID, everyone: bool = Query(False, description=
         s.grading_status = "pending"
     await _record(db, state, user, "exam.regraded", "exam", exam.id, {"sessions": len(sessions), "all": everyone})
     await db.commit()
+    await notify(state, exam.id, "regrading")
     for s in sessions:
         state.tasks.spawn(grade_session(state, s.id))
     return {"queued": len(sessions)}
@@ -646,8 +668,19 @@ async def regrade(exam_id: uuid.UUID, everyone: bool = Query(False, description=
 @router.get("/exams/{exam_id}/monitor", response_model=MonitorOut)
 async def monitor(exam_id: uuid.UUID, batch_code: str | None = Query(None, max_length=64),
                   db: AsyncSession = Depends(get_db), user: User = Depends(require_professor)):
-    """Live view of every enrolled student. Poll every few seconds during the exam."""
+    """Every enrolled student's status. For instant updates open the live WebSocket
+    instead of polling (POST /exams/{id}/live-ticket, then /exams/{id}/live)."""
     exam, _ = await _exam_for(db, user, exam_id, Cap.view)
+    return await monitor_snapshot(db, exam, batch_code)
+
+
+def monitor_counts(rows: list[MonitorRow]) -> dict[str, int]:
+    counts = Counter(r.status for r in rows)
+    counts["disconnected"] = sum(1 for r in rows if r.status in ("active", "locked") and not r.connected)
+    return dict(counts)
+
+
+async def monitor_snapshot(db: AsyncSession, exam: Exam, batch_code: str | None = None) -> MonitorOut:
     policy = effective_policy(exam.policy)
     now = utcnow()
     students = {s.id: s for s in await _enrolled_students(db, exam)}
@@ -676,9 +709,19 @@ async def monitor(exam_id: uuid.UUID, batch_code: str | None = Query(None, max_l
     if batch_code:
         rows = [r for r in rows if r.batch_code == batch_code]
     rows.sort(key=lambda r: ({"locked": 0, "active": 1, "not_started": 2}.get(r.status, 3), r.student.full_name))
-    counts = Counter(r.status for r in rows)
-    counts["disconnected"] = sum(1 for r in rows if r.status in ("active", "locked") and not r.connected)
-    return MonitorOut(exam_id=exam.id, exam_status=exam.status, server_now=now, counts=dict(counts), rows=rows)
+    return MonitorOut(exam_id=exam.id, exam_status=exam.status, server_now=now, counts=monitor_counts(rows), rows=rows)
+
+
+async def monitor_row(db: AsyncSession, exam: Exam, session: ExamSession) -> MonitorRow:
+    """One student's monitor row, exactly as it appears in the full monitor."""
+    student = await db.get(User, session.student_id)
+    events = await db.scalar(select(func.count()).select_from(ProctorEvent)
+                             .where(ProctorEvent.session_id == session.id)) or 0
+    if session.batch_id:
+        code = (await _batch_code_map(db, {session.batch_id})).get(session.batch_id)
+    else:
+        code = (await batch_codes(db, exam)).get(session.student_id)
+    return _row(student, session, events, effective_policy(exam.policy), utcnow(), batch_code=code)
 
 
 @router.get("/exams/{exam_id}/sessions/{session_id}", response_model=SessionDetail)
@@ -756,7 +799,8 @@ async def lock_session(exam_id: uuid.UUID, session_id: uuid.UUID, body: LockIn,
     db.add(_staff_event(session, "staff_lock", {"by": user.email, "reason": body.reason}))
     await _record(db, state, user, "session.locked", "exam_session", session.id, {"reason": body.reason})
     await db.commit()
-    return _row(await db.get(User, session.student_id), session, 0, effective_policy(exam.policy), utcnow())
+    await notify(state, exam.id, "locked", session.id)
+    return await monitor_row(db, exam, session)
 
 
 @router.post("/exams/{exam_id}/sessions/{session_id}/resume", response_model=MonitorRow)
@@ -791,7 +835,8 @@ async def resume_session(exam_id: uuid.UUID, session_id: uuid.UUID, body: Resume
     db.add(_staff_event(session, "staff_resume", details))
     await _record(db, state, user, "session.resumed", "exam_session", session.id, details)
     await db.commit()
-    return _row(await db.get(User, session.student_id), session, 0, effective_policy(exam.policy), now)
+    await notify(state, exam.id, "resumed", session.id)
+    return await monitor_row(db, exam, session)
 
 
 @router.post("/exams/{exam_id}/sessions/{session_id}/terminate", response_model=MonitorRow)
@@ -809,8 +854,9 @@ async def terminate_session(exam_id: uuid.UUID, session_id: uuid.UUID, body: Ter
     db.add(_staff_event(session, "staff_terminate", {"by": user.email, "reason": body.reason}))
     await _record(db, state, user, "session.terminated", "exam_session", session.id, {"reason": body.reason})
     await db.commit()
+    await notify(state, exam.id, "terminated", session.id)
     state.tasks.spawn(grade_session(state, session.id))
-    return _row(await db.get(User, session.student_id), session, 0, effective_policy(exam.policy), utcnow())
+    return await monitor_row(db, exam, session)
 
 
 # ------------------------------------------------------------------------------- marks

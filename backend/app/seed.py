@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import random
 import uuid
 
@@ -117,6 +118,17 @@ def solve(train_csv, test_csv):
         predictions.append(max(set(votes), key=votes.count))
     return predictions
 """
+_FUNC_REFERENCE = """def two_sum(nums, target):
+    seen = {}
+    for i, n in enumerate(nums):
+        if target - n in seen:
+            return [seen[target - n], i]
+        seen[n] = i
+    return []
+"""
+_FUNC_TESTS = [([[2, 7, 11, 15], 9], True), ([[3, 2, 4], 6], True), ([[3, 3], 6], False),
+               ([[-1, -2, -3, -4, -5], -8], False), ([list(range(10000)), 19997], False)]
+
 _ML_STARTER = """def solve(train_csv, test_csv):
     # train_csv: CSV text with columns hours, attendance, passed
     # test_csv:  CSV text with columns hours, attendance (no 'passed')
@@ -187,9 +199,11 @@ async def _demo_exam(db: AsyncSession, subject: Subject, prof: User, question: Q
 
 
 async def seed_demo_data(db: AsyncSession, cipher: FieldCipher) -> dict[str, str]:
-    """Development only: demo accounts, one batch and three lab subjects (programming with a
-    Python-only exam, DBMS with SQL, ML), each with a question, tests and a draft exam.
+    """Development only: demo accounts, one batch and four lab subjects (programming with a
+    Python-only exam, DBMS with SQL, ML, and DSA with a function question), each with a
+    question, tests and a draft exam.
     Safe to run again: only what is missing is added."""
+    from .grading import get_grader
     from .grading.ml import split_dataset
     from .grading.sql import SqlGrader
 
@@ -265,6 +279,25 @@ async def seed_demo_data(db: AsyncSession, cipher: FieldCipher) -> dict[str, str
                                  grader_config=config, starter_code={"python3-ml": _ML_STARTER})
         exam = await _demo_exam(db, subject, prof, q, "ML practical (demo)", ["python3-ml"])
         created["ML exam"] = str(exam.id)
+
+    # 4. DSA lab: a function question (LeetCode style). No starter code is stored, so
+    #    students see the default `def two_sum(nums, target):` from the grader.
+    subject = await _demo_subject(db, code="DEMO-DSA-LAB", name="Data Structures Lab (demo)", dept=dept, prof=prof,
+                                  batch=batch, languages=["python3"])
+    if subject:
+        namespace: dict = {}
+        exec(_FUNC_REFERENCE, namespace)  # our own constant reference solution, to compute expected values
+        cases = [(json.dumps(args), json.dumps(namespace["two_sum"](*args)), sample) for args, sample in _FUNC_TESTS]
+        q = await _demo_question(db, cipher, subject, prof, tests=cases, reference=_FUNC_REFERENCE,
+                                 reference_language="python3", title="Two sum",
+                                 statement_md="Write `two_sum(nums, target)` that **returns** the indices `[i, j]` "
+                                              "(i < j) of the two numbers in `nums` that add up to `target`. "
+                                              "Exactly one pair exists. Return the list; do not print it.",
+                                 difficulty=Difficulty.easy, tags=["arrays", "hashing"], marks=10, grader="function",
+                                 grader_config=get_grader("function").validate_config(
+                                     {"function_name": "two_sum", "params": ["nums", "target"], "compare": "exact"}))
+        exam = await _demo_exam(db, subject, prof, q, "DSA practical (demo)", ["python3"])
+        created["Function-question exam"] = str(exam.id)
 
     await db.commit()
     return {

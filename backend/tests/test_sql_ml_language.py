@@ -207,7 +207,7 @@ async def test_professor_views_by_batch_and_language(api):
 
 
 async def test_demo_data_exams_are_all_ready(api):
-    """The demo the mentor will see: three labs whose exams pass every readiness check
+    """The demo the mentor will see: four labs whose exams pass every readiness check
     (including each reference solution passing its own tests)."""
     async with api.state.sessionmaker() as db:
         await seed_reference_data(db)
@@ -216,10 +216,10 @@ async def test_demo_data_exams_are_all_ready(api):
     assert again["note"] == "demo data already present"
     r = await api.client.post("/api/v1/auth/login", json={"email": "prof.demo@aegis.local", "password": DEMO_PASSWORD})
     headers = {"Authorization": f"Bearer {r.json()['token']}"}
-    for key in ("Python exam (Python only) id", "SQL exam id", "ML exam id"):
+    for key in ("Python exam (Python only) id", "SQL exam id", "ML exam id", "Function-question exam id"):
         r = await api.client.get(f"/api/v1/exams/{info[key]}/readiness", headers=headers)
         assert r.json() == {"ready": True, "problems": [], "warnings": []}, (key, r.json())
-    assert len((await api.client.get("/api/v1/dashboard", headers=headers)).json()) == 3
+    assert len((await api.client.get("/api/v1/dashboard", headers=headers)).json()) == 4
     assert TESTS  # shared fixtures stay importable
 
 

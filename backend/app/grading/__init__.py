@@ -6,10 +6,11 @@
 - stdio.py:    input -> output programs (any language)
 - sql.py:      SQL on SQLite (SELECT result, or statements checked by a query)
 - ml.py:       Python solve(train, test) scored by a metric on hidden labels
+- function.py: LeetCode-style: the student writes a function, its return value is compared
 """
 
 # Import built-in graders so they register themselves.
-from . import ml, sql, stdio  # noqa: F401
+from . import function, ml, sql, stdio  # noqa: F401
 from .registry import get_grader, grader_keys
 
 __all__ = ["get_grader", "grader_keys"]
