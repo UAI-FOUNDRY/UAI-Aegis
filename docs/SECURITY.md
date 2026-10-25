@@ -16,6 +16,12 @@ app as the first wall, not the last one:
 
 ## What the server enforces
 
+- **Language lock.** An exam locked to a language (e.g. Python only) is enforced by the
+  server: answers in any other language are refused, whatever the app sends.
+- **ML labels never leave the server.** The sandbox gets the training data and the test
+  features only; predictions are scored on the server.
+- **SQL answers** run in an in-memory SQLite database inside the sandbox, with
+  `ATTACH`/`DETACH` denied, so a query cannot open other files.
 - **Server-side timer.** The deadline lives on the server. Every write checks it, and a
   background sweeper auto-submits sessions when time is up.
 - **Hidden tests never leave the server.** Students only ever receive sample tests.
@@ -89,6 +95,13 @@ Penalties for misconduct are not automatic; the professor decides.
 - **Admins** manage accounts, subjects and grants but cannot read questions, tests or
   answers, and grants can only be given to professors.
 - A subject always keeps at least one owner.
+- **Live monitor:** the WebSocket needs a ticket from `POST /exams/{id}/live-ticket`,
+  which runs the normal permission check. The ticket is HMAC-signed, bound to that exam
+  and that sign-in, valid for 30 seconds and usable once. While connected, the server
+  re-checks the sign-in and the grant every 10 seconds, so signing out, deactivation or
+  a removed grant ends the stream. Connections from another website's pages are refused
+  (Origin check). Pushed notes contain only ids and a change name, never names, code or
+  marks; each connection reads rows from the database with its own permission check.
 
 ## Tamper-evident audit log
 

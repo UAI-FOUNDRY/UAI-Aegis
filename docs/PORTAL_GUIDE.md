@@ -23,8 +23,11 @@ http://localhost:8000/docs while the backend runs.
 
 All paths below start with `/api/v1`.
 
-**Dashboard**
-- `GET /api/v1/subjects`: subjects shared with me (admins see all).
+**Dashboard (professor home)**
+- `GET /dashboard`: every subject I teach, its languages, its exams, and per batch:
+  enrolled, started, submitted, locked, flagged, still grading; plus which languages
+  students answered in. Build the home screen from this one call.
+- `GET /subjects`: subjects shared with me (admins see all).
 - `POST /api/v1/subjects`: create (the creating professor becomes owner).
 
 **Subject**
@@ -46,18 +49,51 @@ All paths below start with `/api/v1`.
   full text. Grader options: `GET /graders`; comparison modes in `grader_config.compare`
   (`lines`, `exact`, `whitespace`, `case_insensitive`, `float`, `unordered_lines`).
 
+**SQL questions** (grader `sql`, language `sql`)
+- `grader_config`: `schema_sql` (CREATE TABLEs), `mode` `query` (compare a SELECT's
+  result) or `script` (run statements, then compare `check_query`), `order_matters`,
+  `check_column_names`.
+- Each test's input is that test's data (INSERT statements). Reference solution in
+  `sql`, then generate outputs as usual.
+
+**Function questions** (grader `function`, languages Python or JavaScript)
+- LeetCode-style: students write only a function, e.g. `def two_sum(nums, target)`,
+  and **return** the answer. No input parsing or printing.
+- `grader_config`: `function_name` (default `solve`), `params` (e.g. `["nums",
+  "target"]`; students get a matching empty function as starter code, and every test
+  must have that many arguments), `compare` (`exact`, `float`, or `unordered` for a list
+  in any order), `tolerance`.
+- A test's input is the **arguments as a JSON list**: `[[2, 7, 11, 15], 9]`. Expected
+  outputs are the return value as JSON (`[0, 1]`); normally generate them from the
+  reference solution. Bad JSON or the wrong number of arguments is refused with
+  `400 bad_test` when the test is saved, so show that message next to the test.
+- Show a small hint in the editor: "Input: one JSON list of arguments".
+
+**ML questions** (grader `ml`, language `python3-ml`)
+- `grader_config`: `task` (classification/regression), `target` (label column),
+  `metric`, `thresholds` like `[{"at": 0.85, "credit": 1}, {"at": 0.7, "credit": 0.5}]`.
+- Add tests with `POST /questions/{id}/datasets` (multipart: `train`, `test` CSV files,
+  `is_sample`, `weight`). Mark one as sample so students can see the data. No output
+  generation needed; `validate` checks the reference solution reaches the thresholds.
+- Test results carry a `message` such as "accuracy 0.8833 (full marks at >= 0.85)".
+
 **Exam setup**
 - `POST /subjects/{id}/exams`: title, duration, join window, pool (`question_ids`),
   selection rules (e.g. 1 easy + 1 medium per student), policy (strikes, what locks,
-  run limit, reveal hidden results), marking (`auto_percent`).
+  run limit, reveal hidden results), marking (`auto_percent`), and `languages` to lock
+  the exam (e.g. `["python3"]` for a Python lab exam; must be languages of the subject;
+  cannot change once the exam is live).
 - `GET /exams/{id}/readiness`: show problems and warnings before opening.
 - `POST /exams/{id}/open`: returns `access_code`. Show it **large** for the projector.
   `POST /exams/{id}/rotate-code` if it leaks.
 
-**Live monitor** (poll every 3-5 s)
+**Live monitor** (pushed over a WebSocket; no polling needed)
 - `GET /exams/{id}/monitor`: one row per enrolled student: not started, active, locked,
   submitted, terminated; connected; strikes; lock reason; device change pending.
   Sort locked students to the top (the API already does) and make them stand out.
+- For instant updates, open the live stream instead of polling (example below). The
+  server pushes a change within about a second: a student starts, comes back online,
+  gets a strike, is locked, asks to switch laptops, hands in, is graded.
 - Row actions: `POST /exams/{id}/sessions/{sid}/lock`, `.../resume`
   (`extra_minutes`, `reset_strikes`, `approve_new_device`), `.../terminate` (reason
   required). Confirm before terminating.
@@ -65,7 +101,11 @@ All paths below start with `/api/v1`.
 - `POST /exams/{id}/close` ends the exam for everyone.
 
 **Grading and results**
-- `GET /exams/{id}/results`: totals per student, per question, flags, grading status.
+- `GET /exams/{id}/results?batch_id=&language=`: totals per student with their batch and
+  the languages they used.
+- `GET /exams/{id}/answers?language=python3&batch_id=&question_id=`: every answer with
+  its code and marks, for checking answers one after another (paginated).
+- `GET /exams/{id}/monitor?batch_code=`: the live monitor for one division.
 - Session detail shows each answer's code, test verdicts and marks; run code via
   `GET /exams/{id}/sessions/{sid}/runs/{run_id}`.
 - `PUT /exams/{id}/sessions/{sid}/answers/{qid}/marks`: `manual_marks` (out of
@@ -82,6 +122,53 @@ All paths below start with `/api/v1`.
 - Departments, batches and members, languages, app releases: `/admin/...`.
 - Audit: `GET /admin/audit`, and a "verify integrity" button on `GET /admin/audit/verify`.
 
+## Live monitor WebSocket
+
+Browsers cannot send the `Authorization` header on a WebSocket, so the portal first gets
+a one-time ticket (valid 30 s, single use), then connects with it.
+
+```ts
+async function openLiveMonitor(examId: string, onSnapshot, onRow, batchCode?: string) {
+  let stopped = false, socket: WebSocket | undefined, retry = 1000;
+  async function connect() {
+    const r = await api.post(`/api/v1/exams/${examId}/live-ticket`);   // normal bearer request
+    if (r.status === 403 || r.status === 404) return;                   // no access: stop
+    const { path } = await r.json();
+    const base = API_URL.replace(/^http/, "ws");                        // http->ws, https->wss
+    socket = new WebSocket(base + path + (batchCode ? `&batch_code=${encodeURIComponent(batchCode)}` : ""));
+    socket.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === "snapshot") onSnapshot(msg.data);  // same shape as GET /monitor: replace everything
+      if (msg.type === "row") onRow(msg.data, msg.change); // replace the row with the same student.id
+      retry = 1000;
+    };
+    socket.onclose = (e) => {
+      if (stopped || e.code === 4403) return;             // closed by us, or access removed
+      setTimeout(connect, retry);                         // 4401 (old ticket), 1012 (restart), network
+      retry = Math.min(retry * 2, 15000);
+    };
+  }
+  connect();
+  return () => { stopped = true; socket?.close(); };
+}
+```
+
+- Messages: `{"type": "snapshot", "data": <GET /monitor>}` on connect, about every
+  10 s, and after exam-wide changes (opened, closed, regrade); and
+  `{"type": "row", "change": "locked", "changes": [...], "server_now": "...", "data":
+  <MonitorRow>}` for one student.
+- After a `row`, recompute the counts from your rows: count by `status`, plus
+  `disconnected` = active or locked and not `connected`.
+- `change` values: `started`, `connected`, `strike`, `event`, `locked`, `resumed`,
+  `device_change`, `submitted`, `terminated`, `grading`, `graded`. Flash the row and
+  play a short sound on `locked` and `device_change`, since those need the professor.
+- Close codes: `4401` get a new ticket and reconnect, `4403` stop (no access or signed
+  out), `4429` too many monitors open, `1012` server restarting (reconnect).
+- If the WebSocket cannot connect at all (an old proxy, say), fall back to polling
+  `GET /monitor` every 5 s.
+- The lock/resume/terminate endpoints still return the updated row, so the screen can
+  update at once without waiting for the push.
+
 ## Demo data
 
 ```bash
@@ -89,3 +176,5 @@ cd backend && alembic upgrade head && python -m app.cli demo-data && uvicorn app
 ```
 
 `prof.demo@aegis.local` and `admin.demo@aegis.local`, password `Aegis-demo-2026!`.
+Four demo labs: Programming (Python-only exam), DBMS (SQL), ML, and DSA (a function
+question, "Two sum").

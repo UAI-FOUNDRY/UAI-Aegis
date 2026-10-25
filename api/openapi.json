@@ -1350,6 +1350,36 @@
         ]
       }
     },
+    "/api/v1/dashboard": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "summary": "Dashboard",
+        "operationId": "dashboard_api_v1_dashboard_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SubjectSummary"
+                  },
+                  "type": "array",
+                  "title": "Response Dashboard Api V1 Dashboard Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/subjects": {
       "get": {
         "tags": [
@@ -2448,6 +2478,65 @@
         }
       }
     },
+    "/api/v1/questions/{question_id}/datasets": {
+      "post": {
+        "tags": [
+          "questions"
+        ],
+        "summary": "Add Dataset",
+        "description": "ML questions: add one train/test split as a test case. The test labels are kept\non the server and never sent to students or to the sandbox.",
+        "operationId": "add_dataset_api_v1_questions__question_id__datasets_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Question Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_add_dataset_api_v1_questions__question_id__datasets_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/questions/{question_id}/validate": {
       "post": {
         "tags": [
@@ -3138,7 +3227,7 @@
           "exams"
         ],
         "summary": "Monitor",
-        "description": "Live view of every enrolled student. Poll every few seconds during the exam.",
+        "description": "Every enrolled student's status. For instant updates open the live WebSocket\ninstead of polling (POST /exams/{id}/live-ticket, then /exams/{id}/live).",
         "operationId": "monitor_api_v1_exams__exam_id__monitor_get",
         "security": [
           {
@@ -3154,6 +3243,23 @@
               "type": "string",
               "format": "uuid",
               "title": "Exam Id"
+            }
+          },
+          {
+            "name": "batch_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Batch Code"
             }
           }
         ],
@@ -3598,7 +3704,220 @@
           "exams"
         ],
         "summary": "Results",
+        "description": "Marks per student. Filter by batch (division) or by the language students answered in.",
         "operationId": "results_api_v1_exams__exam_id__results_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "exam_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Exam Id"
+            }
+          },
+          {
+            "name": "batch_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Batch Id"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 32
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Language"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ResultRow"
+                  },
+                  "title": "Response Results Api V1 Exams  Exam Id  Results Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exams/{exam_id}/answers": {
+      "get": {
+        "tags": [
+          "exams"
+        ],
+        "summary": "List Answers",
+        "description": "Every saved answer of an exam with its code and marks, for checking answers one\nafter another. Filter by language, batch and question.",
+        "operationId": "list_answers_api_v1_exams__exam_id__answers_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "exam_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Exam Id"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 32
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "e.g. python3: only Python answers",
+              "title": "Language"
+            },
+            "description": "e.g. python3: only Python answers"
+          },
+          {
+            "name": "batch_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Batch Id"
+            }
+          },
+          {
+            "name": "question_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Question Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnswerPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exams/{exam_id}/live-ticket": {
+      "post": {
+        "tags": [
+          "live"
+        ],
+        "summary": "Live Ticket",
+        "description": "A one-time ticket to open the live monitor WebSocket (browsers cannot send the\nAuthorization header on a WebSocket). Valid for 30 seconds and for one connection.",
+        "operationId": "live_ticket_api_v1_exams__exam_id__live_ticket_post",
         "security": [
           {
             "HTTPBearer": []
@@ -3622,11 +3941,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ResultRow"
-                  },
-                  "title": "Response Results Api V1 Exams  Exam Id  Results Get"
+                  "$ref": "#/components/schemas/TicketOut"
                 }
               }
             }
@@ -4405,6 +4720,135 @@
         ],
         "title": "AnswerOut"
       },
+      "AnswerPage": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AnswerRow"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "items"
+        ],
+        "title": "AnswerPage"
+      },
+      "AnswerRow": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Session Id"
+          },
+          "student": {
+            "$ref": "#/components/schemas/UserBrief"
+          },
+          "batch_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Code"
+          },
+          "question_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Question Id"
+          },
+          "question_title": {
+            "type": "string",
+            "title": "Question Title"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "is_final": {
+            "type": "boolean",
+            "title": "Is Final"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "auto_fraction": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Fraction"
+          },
+          "manual_marks": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manual Marks"
+          },
+          "override_marks": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Override Marks"
+          },
+          "total": {
+            "type": "number",
+            "title": "Total"
+          },
+          "marks": {
+            "type": "integer",
+            "title": "Marks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "student",
+          "batch_code",
+          "question_id",
+          "question_title",
+          "language",
+          "code",
+          "is_final",
+          "updated_at",
+          "auto_fraction",
+          "manual_marks",
+          "override_marks",
+          "total",
+          "marks"
+        ],
+        "title": "AnswerRow"
+      },
       "AuditOut": {
         "properties": {
           "seq": {
@@ -4569,6 +5013,102 @@
         },
         "type": "object",
         "title": "BatchPatch"
+      },
+      "BatchProgress": {
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Batch Id"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "enrolled": {
+            "type": "integer",
+            "title": "Enrolled"
+          },
+          "started": {
+            "type": "integer",
+            "title": "Started"
+          },
+          "submitted": {
+            "type": "integer",
+            "title": "Submitted"
+          },
+          "locked": {
+            "type": "integer",
+            "title": "Locked"
+          },
+          "flagged": {
+            "type": "integer",
+            "title": "Flagged"
+          },
+          "grading_pending": {
+            "type": "integer",
+            "title": "Grading Pending"
+          }
+        },
+        "type": "object",
+        "required": [
+          "batch_id",
+          "code",
+          "name",
+          "enrolled",
+          "started",
+          "submitted",
+          "locked",
+          "flagged",
+          "grading_pending"
+        ],
+        "title": "BatchProgress"
+      },
+      "Body_add_dataset_api_v1_questions__question_id__datasets_post": {
+        "properties": {
+          "train": {
+            "type": "string",
+            "format": "binary",
+            "title": "Train",
+            "description": "Training data CSV, with the target column"
+          },
+          "test": {
+            "type": "string",
+            "format": "binary",
+            "title": "Test",
+            "description": "Evaluation data CSV, with the target column"
+          },
+          "is_sample": {
+            "type": "boolean",
+            "title": "Is Sample",
+            "description": "Sample datasets are visible to students",
+            "default": false
+          },
+          "weight": {
+            "type": "integer",
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Weight",
+            "default": 1
+          },
+          "group": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Group",
+            "default": "main"
+          }
+        },
+        "type": "object",
+        "required": [
+          "train",
+          "test"
+        ],
+        "title": "Body_add_dataset_api_v1_questions__question_id__datasets_post"
       },
       "Body_import_users_api_v1_admin_users_import_post": {
         "properties": {
@@ -4978,6 +5518,22 @@
             "title": "Batch Ids",
             "description": "Limit to some of the subject's batches."
           },
+          "languages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Languages",
+            "description": "Lock the exam to these languages, e.g. [\"python3\"]."
+          },
           "question_ids": {
             "items": {
               "type": "string",
@@ -5053,6 +5609,20 @@
               }
             ],
             "title": "Batch Ids"
+          },
+          "languages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Languages"
           },
           "question_ids": {
             "items": {
@@ -5140,6 +5710,7 @@
           "policy",
           "marking",
           "batch_ids",
+          "languages",
           "question_ids",
           "access_code",
           "opened_at",
@@ -5248,6 +5819,21 @@
               }
             ],
             "title": "Batch Ids"
+          },
+          "languages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Languages"
           }
         },
         "type": "object",
@@ -5326,6 +5912,91 @@
           "closed"
         ],
         "title": "ExamStatus"
+      },
+      "ExamSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExamStatus"
+          },
+          "languages": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Languages"
+          },
+          "languages_used": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Languages Used"
+          },
+          "opened_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opened At"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "results_released": {
+            "type": "boolean",
+            "title": "Results Released"
+          },
+          "batches": {
+            "items": {
+              "$ref": "#/components/schemas/BatchProgress"
+            },
+            "type": "array",
+            "title": "Batches"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "status",
+          "languages",
+          "languages_used",
+          "opened_at",
+          "closed_at",
+          "results_released",
+          "batches"
+        ],
+        "title": "ExamSummary"
       },
       "FinishOut": {
         "properties": {
@@ -6054,6 +6725,17 @@
         "properties": {
           "student": {
             "$ref": "#/components/schemas/UserBrief"
+          },
+          "batch_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Code"
           },
           "session_id": {
             "anyOf": [
@@ -6943,6 +7625,36 @@
           "student": {
             "$ref": "#/components/schemas/UserBrief"
           },
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "batch_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Code"
+          },
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Languages"
+          },
           "session_id": {
             "type": "string",
             "format": "uuid",
@@ -6989,6 +7701,9 @@
         "type": "object",
         "required": [
           "student",
+          "batch_id",
+          "batch_code",
+          "languages",
           "session_id",
           "status",
           "finish_reason",
@@ -8041,6 +8756,50 @@
         "type": "object",
         "title": "SubjectPatch"
       },
+      "SubjectSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "my_role": {
+            "$ref": "#/components/schemas/GrantRole"
+          },
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Languages"
+          },
+          "exams": {
+            "items": {
+              "$ref": "#/components/schemas/ExamSummary"
+            },
+            "type": "array",
+            "title": "Exams"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "code",
+          "name",
+          "my_role",
+          "languages",
+          "exams"
+        ],
+        "title": "SubjectSummary"
+      },
       "TemporaryPasswordIn": {
         "properties": {
           "password": {
@@ -8139,6 +8898,17 @@
               }
             ],
             "title": "Stderr"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
           }
         },
         "type": "object",
@@ -8433,6 +9203,14 @@
             "type": "string",
             "title": "Verdict"
           },
+          "credit": {
+            "type": "number",
+            "title": "Credit"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
           "time_ms": {
             "anyOf": [
               {
@@ -8472,6 +9250,8 @@
           "group",
           "weight",
           "verdict",
+          "credit",
+          "message",
           "time_ms",
           "memory_kb",
           "stdout",
@@ -8496,6 +9276,29 @@
           "tests"
         ],
         "title": "TestsIn"
+      },
+      "TicketOut": {
+        "properties": {
+          "ticket": {
+            "type": "string",
+            "title": "Ticket"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ticket",
+          "expires_in",
+          "path"
+        ],
+        "title": "TicketOut"
       },
       "TryIn": {
         "properties": {

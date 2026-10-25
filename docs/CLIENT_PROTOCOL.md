@@ -118,7 +118,19 @@ GET  /api/v1/student/results                                 bearer only: releas
   Also keep a local encrypted copy so a Wi-Fi drop loses nothing; resend when back.
 - **Run** also saves. Final marks always use the latest saved code when the exam ends.
 - **Monaco**: each question lists `languages` with `monaco_id` and `starter_code` per
-  language key; use them directly, no hard-coded language list in the app.
+  language key; use them directly, no hard-coded language list in the app. When the
+  list has one language (a locked exam, e.g. Python only), show no language picker.
+- **SQL questions** use the `sql` language (Monaco `sql`). Sample inputs are the test's
+  data (INSERT statements); outputs are JSON `{"columns": [...], "rows": [[...]]}`; show
+  them as small tables.
+- **Function questions** (LeetCode style): `starter_code` already contains the empty
+  function (e.g. `def two_sum(nums, target):`). A sample's `input` is the arguments as
+  a JSON list (`[[2, 7, 11, 15], 9]`) and `expected_output` is the returned value as
+  JSON (`[0, 1]`); label them "Arguments" and "Returns". In run results, `stdout` is the
+  value the function returned and `stderr` holds anything the student printed.
+- **ML questions** use `python3-ml`. A sample's `input` is JSON `{"train": csv, "test":
+  csv}` and its `expected_output` is the list of labels: offer them as downloadable
+  CSV files rather than printing them. Results carry a `message` with the score.
 - **Finish** returns a receipt (SHA-256) per answer. Show them to the student.
 
 ## 5. Report events
