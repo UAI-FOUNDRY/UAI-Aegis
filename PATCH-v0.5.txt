@@ -1,0 +1,41 @@
+UAI Aegis patch v0.4 -> v0.5
+============================
+New: live push for the professor's monitor (WebSocket) and function questions
+(LeetCode style). No database changes.
+
+HOW TO APPLY
+1. Unzip and copy the "uai-aegis" folder over your project folder
+   (C:\Projects\UAI aegis\uai-aegis). Say "Replace" when Windows asks.
+2. In backend\ with the environment active:
+     pip install -r requirements-dev.txt
+     python -m app.cli demo-data        (adds the new DSA demo lab; the rest is kept)
+3. Restart the server:  uvicorn app.main:app --reload
+4. Check it:            python -m app.cli simulate
+   (now 4 labs, including "live monitor showed student 3's lock in ... ms")
+
+NEW FILES
+  backend/app/api/v1/live.py               live monitor ticket + WebSocket
+  backend/app/services/live.py             push hub (memory, or Redis between workers)
+  backend/app/grading/function.py          function-question grader (Python, JavaScript)
+  backend/tests/test_live_monitor.py
+  backend/tests/test_function_questions.py
+
+CHANGED FILES
+  backend/app/api/v1/__init__.py           registers the live routes
+  backend/app/api/v1/exams.py              pushes exam/session changes; reusable monitor rows
+  backend/app/api/v1/student.py            pushes student changes; default starter code
+  backend/app/api/v1/questions.py          checks tests when saved (e.g. JSON arguments)
+  backend/app/services/exams.py            pushes grading and auto-submit changes
+  backend/app/grading/registry.py          new optional grader hooks
+  backend/app/grading/__init__.py          registers the function grader
+  backend/app/config.py                    live monitor settings
+  backend/app/state.py, backend/app/main.py
+  backend/app/seed.py                      DSA demo lab with a "Two sum" function question
+  backend/app/simulate.py, backend/app/cli.py   simulator checks live push; --lab function
+  backend/requirements.txt                 websockets pinned (already came with uvicorn)
+  backend/pyproject.toml                   hides two harmless library deprecation warnings
+  backend/tests/test_questions_and_judge.py, backend/tests/test_sql_ml_language.py
+  api/openapi.json                         + POST /exams/{id}/live-ticket
+  docs/PORTAL_GUIDE.md                     live monitor section with code (for Dev 3)
+  docs/CLIENT_PROTOCOL.md                  function questions in the student app (Dev 2)
+  docs/SECURITY.md, README.md

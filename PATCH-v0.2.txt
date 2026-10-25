@@ -1,0 +1,32 @@
+UAI Aegis patch v0.1 -> v0.2
+
+Unzip into the folder that CONTAINS uai-aegis/ and allow it to replace files.
+No files were deleted. Then, in backend/ with the venv active:
+  alembic upgrade head
+  python -m app.cli seed
+  python -m app.cli demo-data
+
+Changed or added files:
+  uai-aegis/README.md
+  uai-aegis/api/openapi.json
+  uai-aegis/backend/alembic/versions/0002_exam_language_lock_and_session_batch.py
+  uai-aegis/backend/app/api/v1/__init__.py
+  uai-aegis/backend/app/api/v1/dashboard.py
+  uai-aegis/backend/app/api/v1/exams.py
+  uai-aegis/backend/app/api/v1/questions.py
+  uai-aegis/backend/app/api/v1/student.py
+  uai-aegis/backend/app/grading/__init__.py
+  uai-aegis/backend/app/grading/executor.py
+  uai-aegis/backend/app/grading/ml.py
+  uai-aegis/backend/app/grading/registry.py
+  uai-aegis/backend/app/grading/sql.py
+  uai-aegis/backend/app/grading/stdio.py
+  uai-aegis/backend/app/models/exam.py
+  uai-aegis/backend/app/seed.py
+  uai-aegis/backend/app/services/exams.py
+  uai-aegis/backend/pyproject.toml
+  uai-aegis/backend/tests/test_questions_and_judge.py
+  uai-aegis/backend/tests/test_sql_ml_language.py
+  uai-aegis/docs/CLIENT_PROTOCOL.md
+  uai-aegis/docs/PORTAL_GUIDE.md
+  uai-aegis/docs/SECURITY.md

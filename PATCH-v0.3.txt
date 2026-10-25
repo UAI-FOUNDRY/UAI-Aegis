@@ -1,0 +1,22 @@
+UAI Aegis patch v0.2 -> v0.3
+
+Unzip into the folder that CONTAINS uai-aegis/ and allow it to replace files.
+No files were deleted and no database changes, so no migration is needed.
+
+What changed:
+- New: python -m app.cli simulate  (full simulated exam against the running server)
+- Fix: grading could fail on Linux/macOS servers when a program exits without reading its input
+- Change: sign-in rate limit now counts only FAILED attempts
+
+Files:
+  uai-aegis/.gitignore
+  uai-aegis/README.md
+  uai-aegis/backend/app/api/v1/auth.py
+  uai-aegis/backend/app/cli.py
+  uai-aegis/backend/app/config.py
+  uai-aegis/backend/app/grading/executor.py
+  uai-aegis/backend/app/security/stores.py
+  uai-aegis/backend/app/simulate.py
+  uai-aegis/backend/tests/test_auth_admin_audit.py
+  uai-aegis/backend/tests/test_questions_and_judge.py
+  uai-aegis/backend/tests/test_stores_and_resume.py

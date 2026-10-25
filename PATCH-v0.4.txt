@@ -1,0 +1,13 @@
+UAI Aegis patch v0.3 -> v0.4
+
+Unzip into the folder that CONTAINS uai-aegis/ and allow it to replace files.
+No database changes. Restart the server after applying.
+
+Fix: on Windows, running code failed (500 on readiness / Run) when the server was
+started with --reload. The local code runner now works on every OS and event loop.
+Also: while developing, a 500 response now includes the error's cause.
+
+Files:
+  uai-aegis/backend/app/grading/executor.py
+  uai-aegis/backend/app/main.py
+  uai-aegis/backend/tests/test_questions_and_judge.py
