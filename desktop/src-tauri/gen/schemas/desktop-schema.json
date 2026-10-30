@@ -219,6 +219,12 @@
           "markdownDescription": "Enables the logout command without any pre-configured scope."
         },
         {
+          "description": "Enables the precheck command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-precheck",
+          "markdownDescription": "Enables the precheck command without any pre-configured scope."
+        },
+        {
           "description": "Enables the report_blocked_paste command without any pre-configured scope.",
           "type": "string",
           "const": "allow-report-blocked-paste",
@@ -289,6 +295,12 @@
           "type": "string",
           "const": "deny-logout",
           "markdownDescription": "Denies the logout command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the precheck command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-precheck",
+          "markdownDescription": "Denies the precheck command without any pre-configured scope."
         },
         {
           "description": "Denies the report_blocked_paste command without any pre-configured scope.",

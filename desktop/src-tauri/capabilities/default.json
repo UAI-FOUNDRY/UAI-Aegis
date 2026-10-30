@@ -17,6 +17,7 @@
     "allow-submit-code",
     "allow-finish-exam",
     "allow-heartbeat",
-    "allow-report-blocked-paste"
+    "allow-report-blocked-paste",
+    "allow-precheck"
   ]
 }

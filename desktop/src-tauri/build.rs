@@ -15,6 +15,7 @@ fn main() {
             "finish_exam",
             "heartbeat",
             "report_blocked_paste",
+            "precheck",
         ]),
     ))
     .expect("failed to run tauri-build");

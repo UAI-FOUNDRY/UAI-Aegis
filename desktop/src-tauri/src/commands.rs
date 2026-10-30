@@ -38,6 +38,8 @@ pub struct AppState {
     active_session: StdMutex<Option<String>>,
     /// Bumped on every focus change; a pending focus_lost report checks it is still current.
     focus_gen: AtomicU64,
+    /// Set once at startup (lib.rs) so session tracking can switch the lockdown on and off.
+    app: OnceLock<AppHandle>,
 }
 
 impl AppState {
@@ -47,11 +49,29 @@ impl AppState {
             drafts: StdMutex::new(None),
             active_session: StdMutex::new(None),
             focus_gen: AtomicU64::new(0),
+            app: OnceLock::new(),
         }
     }
 
+    pub fn set_app(&self, app: AppHandle) {
+        let _ = self.app.set(app);
+    }
+
+    /// A session on screen (active or locked) = lockdown on; none = off.
     fn set_active(&self, session_id: Option<String>) {
+        let on = session_id.is_some();
         *self.active_session.lock().unwrap() = session_id;
+        if let Some(app) = self.app.get() {
+            if on {
+                crate::lockdown::engage(app);
+            } else {
+                crate::lockdown::release(app);
+            }
+        }
+    }
+
+    pub fn active_session(&self) -> Option<String> {
+        self.active()
     }
 
     fn active(&self) -> Option<String> {
@@ -184,7 +204,7 @@ async fn signed(state: &AppState, method: Method, path: &str, body: Option<Value
 }
 
 /// POST .../events (section 5). Kinds are chosen here in Rust, never passed in from JS.
-async fn send_event(state: &AppState, session_id: &str, kind: &str, details: Value) -> Result<Value, ApiError> {
+pub(crate) async fn report_event(state: &AppState, session_id: &str, kind: &str, details: Value) -> Result<Value, ApiError> {
     let body = json!({"events": [{"kind": kind, "client_ts": now_iso(), "details": details}]});
     let reply = signed(state, Method::POST, &format!("/api/v1/student/sessions/{session_id}/events"), Some(body)).await?;
     state.track(session_id, &reply);
@@ -208,7 +228,7 @@ pub fn on_focus_changed(app: &AppHandle, focused: bool) {
         if state.focus_gen.load(Ordering::SeqCst) != generation || state.active().as_deref() != Some(&session_id) {
             return; // focus came back in time, or the exam ended
         }
-        let _ = send_event(&state, &session_id, "focus_lost", json!({"grace_ms": FOCUS_GRACE_MS})).await;
+        let _ = report_event(&state, &session_id, "focus_lost", json!({"grace_ms": FOCUS_GRACE_MS})).await;
     });
 }
 
@@ -309,7 +329,7 @@ pub async fn start_exam(
     if let (Some(started), Some(now)) = (started, now) {
         let seconds = (now - started).num_seconds();
         if seconds > 20 && view["status"] == "active" {
-            if let Ok(status) = send_event(&state, &session_id, "app_restarted", json!({"seconds_since_start": seconds})).await {
+            if let Ok(status) = report_event(&state, &session_id, "app_restarted", json!({"seconds_since_start": seconds})).await {
                 for key in ["status", "strikes", "lock_reason"] {
                     view[key] = status[key].clone();
                 }
@@ -415,5 +435,24 @@ pub async fn heartbeat(
 pub async fn report_blocked_paste(state: State<'_, AppState>, session_id: String, chars: u32)
     -> Result<Value, ApiError> {
     let sid = uuid_arg(&session_id)?;
-    send_event(&state, &sid, "paste_blocked", json!({"chars": chars})).await
+    report_event(&state, &sid, "paste_blocked", json!({"chars": chars})).await
+}
+
+#[derive(Serialize)]
+pub struct PrecheckResult {
+    ok: bool,
+    problems: Vec<crate::lockdown::detect::Finding>,
+}
+
+/// Before Start: the same checks the exam loop runs, so the student can fix things
+/// (unplug a screen, close AnyDesk) before anything is reported.
+#[tauri::command]
+pub async fn precheck(app: AppHandle) -> Result<PrecheckResult, ApiError> {
+    if crate::lockdown::disabled_for_dev() {
+        return Ok(PrecheckResult { ok: true, problems: vec![] });
+    }
+    let problems = tauri::async_runtime::spawn_blocking(move || crate::lockdown::detect::Scanner::new().scan(&app))
+        .await
+        .map_err(|_| ApiError::local("precheck_failed", "Could not check this laptop."))?;
+    Ok(PrecheckResult { ok: problems.is_empty(), problems })
 }

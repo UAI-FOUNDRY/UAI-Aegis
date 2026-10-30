@@ -2,6 +2,7 @@ pub mod client;
 mod commands;
 pub mod drafts;
 mod keystore;
+pub mod lockdown;
 pub mod signing;
 
 use tauri::{Manager, WindowEvent};
@@ -13,10 +14,18 @@ pub fn run() {
     });
     tauri::Builder::default()
         .manage(commands::AppState::new())
-        .on_window_event(|window, event| {
-            if let WindowEvent::Focused(focused) = event {
-                commands::on_focus_changed(window.app_handle(), *focused);
-            }
+        .setup(|app| {
+            app.state::<commands::AppState>().set_app(app.handle().clone());
+            lockdown::start_monitor(app.handle().clone());
+            #[cfg(windows)]
+            lockdown::win32::start_keyboard_hook();
+            Ok(())
+        })
+        .on_window_event(|window, event| match event {
+            WindowEvent::Focused(focused) => commands::on_focus_changed(window.app_handle(), *focused),
+            // The exam window cannot be closed while an exam is on screen.
+            WindowEvent::CloseRequested { api, .. } if lockdown::engaged() => api.prevent_close(),
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             commands::login,
@@ -31,6 +40,7 @@ pub fn run() {
             commands::finish_exam,
             commands::heartbeat,
             commands::report_blocked_paste,
+            commands::precheck,
         ])
         .run(tauri::generate_context!())
         .expect("error while running UAI Aegis");

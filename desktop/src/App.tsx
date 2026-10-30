@@ -146,6 +146,7 @@ function ExamList({ onStarted, onSignedOut }: { onStarted: (v: SessionView) => v
   const [codes, setCodes] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [problems, setProblems] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -164,7 +165,15 @@ function ExamList({ onStarted, onSignedOut }: { onStarted: (v: SessionView) => v
   const start = async (exam: StudentExam) => {
     setBusy(exam.exam_id);
     setError(null);
+    setProblems([]);
     try {
+      // Check the laptop first (extra screens, VMs, remote-control or recording tools),
+      // so the student can fix it before anything is reported to the professor.
+      const check = await api.precheck();
+      if (!check.ok) {
+        setProblems(check.problems.map((p) => p.message));
+        return;
+      }
       // Resuming after a crash on the same laptop needs no code.
       const code = exam.session_id ? null : codes[exam.exam_id] ?? "";
       onStarted(await api.startExam(exam.exam_id, code));
@@ -183,6 +192,17 @@ function ExamList({ onStarted, onSignedOut }: { onStarted: (v: SessionView) => v
         <button className="secondary" onClick={load}>Refresh</button>
       </div>
       {error && <p className="error">{error}</p>}
+      {problems.length > 0 && (
+        <div className="error">
+          <strong>Fix these before starting:</strong>
+          <ul>
+            {problems.map((p) => (
+              <li key={p}>{p}</li>
+            ))}
+          </ul>
+          Then press Start again.
+        </div>
+      )}
       {exams === null && <p className="muted">Loading…</p>}
       {exams?.length === 0 && <p className="muted">No open exams. Ask your professor to open the exam, then refresh.</p>}
       <ul className="exams">

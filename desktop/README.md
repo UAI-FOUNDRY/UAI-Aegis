@@ -22,8 +22,20 @@ Specs: `docs/CLIENT_PROTOCOL.md` (the protocol), `backend/app/security/signing.p
 - All HTTP and signing in Rust; the web view can call only the commands in
   `src-tauri/build.rs` + `capabilities/default.json`. Strict CSP in `tauri.conf.json`.
 
-Next: Windows lockdown (kiosk full screen, keyboard hook, capture exclusion, display/VM/
-remote-desktop detection), then macOS and Linux.
+- Lockdown while a session is on screen (`src-tauri/src/lockdown/`): full screen, always on
+  top, cannot be closed or minimised, hidden from screen capture; leaving full screen is
+  reported (`fullscreen_exited`) and undone. Windows: keyboard hook blocks Alt+Tab, Alt+Esc,
+  Alt+F4, Ctrl+Esc, Ctrl+Shift+Esc, Win keys, Print Screen (`shortcut_blocked`, summarised).
+- Detection before Start (the student must fix it) and every 3 s during the exam, each
+  reported once: extra displays, VMs (CPUID + firmware strings), Remote Desktop session,
+  remote-control / screen-sharing / recording apps, debugger (release builds, Windows).
+
+Development builds only: `$env:AEGIS_LOCKDOWN="off"` before `npm run tauri dev` disables the
+lockdown; Ctrl+Alt+Shift+Q turns it off mid-run (Windows); `AEGIS_ALLOW_VM=1` skips the VM
+check. Release builds ignore all three.
+
+Next: "My results" screen, `network_reconnected`, installer + code signing, macOS/Linux
+specifics (keyboard blocking), blocked-app list from the server.
 
 ## Folder map
 
@@ -41,6 +53,7 @@ desktop/
     src/drafts.rs      encrypted local copy of answers (tests: round trip, tamper, wrong session)
     src/client.rs      HTTP client: serialise once, sign, send the same bytes; error parsing
     src/commands.rs    the commands the UI may call + focus-loss reporting
+    src/lockdown/      kiosk + detection loop (mod.rs), checks (detect.rs), Windows hook/RDP/BIOS (windows.rs)
     tests/live_backend.rs   full signed flow against a running backend
     build.rs, capabilities/default.json   command allow-list
     tauri.conf.json    window, CSP, bundle
