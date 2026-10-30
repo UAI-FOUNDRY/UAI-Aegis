@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-finish-exam"
+description = "Enables the finish_exam command without any pre-configured scope."
+commands.allow = ["finish_exam"]
+
+[[permission]]
+identifier = "deny-finish-exam"
+description = "Denies the finish_exam command without any pre-configured scope."
+commands.deny = ["finish_exam"]

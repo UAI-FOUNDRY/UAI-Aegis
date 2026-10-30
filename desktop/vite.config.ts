@@ -1,0 +1,19 @@
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+// Tauri expects a fixed port and must see Rust compile errors in the terminal.
+export default defineConfig({
+  plugins: [react()],
+  clearScreen: false,
+  server: {
+    port: 1420,
+    strictPort: true,
+    watch: { ignored: ["**/src-tauri/**"] },
+  },
+  build: {
+    target: "es2021",
+    sourcemap: false,
+    // Monaco is large; fine for a desktop app that loads from disk.
+    chunkSizeWarningLimit: 5000,
+  },
+});

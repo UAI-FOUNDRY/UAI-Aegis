@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-exam"
+description = "Enables the start_exam command without any pre-configured scope."
+commands.allow = ["start_exam"]
+
+[[permission]]
+identifier = "deny-start-exam"
+description = "Denies the start_exam command without any pre-configured scope."
+commands.deny = ["start_exam"]
