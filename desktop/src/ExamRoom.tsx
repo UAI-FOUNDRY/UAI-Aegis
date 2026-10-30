@@ -528,6 +528,14 @@ export default function ExamRoom({
   );
 }
 
+/** Spot the classic mistake: input("Enter n:") prints its prompt into the output. */
+function promptHint(stdout?: string | null, expected?: string | null): boolean {
+  if (!stdout || expected == null) return false;
+  const out = stdout.split("\n")[0];
+  const exp = expected.split("\n")[0];
+  return out !== exp && exp.length > 0 && out.endsWith(exp);
+}
+
 function ResultPanel({ result }: { result: Result }) {
   if (result.kind === "error") return <p className="error">{result.message}</p>;
   const { out } = result;
@@ -546,6 +554,12 @@ function ResultPanel({ result }: { result: Result }) {
           <div className="muted">Compiler output</div>
           <pre className="out bad">{out.compile_output}</pre>
         </>
+      )}
+      {out.tests.some((t) => t.verdict === "WA" && promptHint(t.stdout, t.expected_output)) && (
+        <p className="notice">
+          Tip: your output starts with extra text. If you wrote something like <code>input("Enter n:")</code>,
+          the prompt is printed too. Use <code>input()</code> with no text: the output must match exactly.
+        </p>
       )}
       {out.tests.map((t) => (
         <details key={`${t.is_sample}-${t.ordinal}`} className="test" open={t.verdict !== "AC" && t.is_sample}>
