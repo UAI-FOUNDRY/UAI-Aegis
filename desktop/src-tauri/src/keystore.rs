@@ -36,6 +36,27 @@ pub fn load_or_create_key(user_id: &str) -> Result<SigningKey, String> {
     }
 }
 
+/// Key for the local encrypted draft copies (drafts.rs), one per user.
+pub fn load_or_create_draft_key(user_id: &str) -> Result<[u8; 32], String> {
+    let entry = entry(&format!("draft-key:{user_id}"))?;
+    match entry.get_password() {
+        Ok(stored) => B64
+            .decode(stored.trim())
+            .ok()
+            .and_then(|b| b.try_into().ok())
+            .ok_or_else(|| "Stored draft key is damaged.".to_string()),
+        Err(KeyringError::NoEntry) => {
+            let mut key = [0u8; 32];
+            rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut key);
+            entry
+                .set_password(&B64.encode(key))
+                .map_err(|e| format!("Can't save the draft key to the system keychain: {e}"))?;
+            Ok(key)
+        }
+        Err(e) => Err(format!("Can't read the system keychain: {e}")),
+    }
+}
+
 /// The device id is not secret, but keeping it avoids re-registering on every login
 /// (registration is rate limited).
 pub fn load_device_id(user_id: &str) -> Option<String> {

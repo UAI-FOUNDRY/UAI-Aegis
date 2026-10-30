@@ -2,7 +2,12 @@
 // The web view never talks to the server or sees the device key; Rust does both.
 import { invoke } from "@tauri-apps/api/core";
 
-export type ApiError = { status: number; code: string; message: string };
+export type ApiError = {
+  status: number;
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+};
 
 export function isApiError(e: unknown): e is ApiError {
   return typeof e === "object" && e !== null && "code" in e && "message" in e;
@@ -65,7 +70,39 @@ export type Question = {
   starter_code: Record<string, string>;
   samples: { ordinal: number; input: string; expected_output: string }[];
   hidden_test_count: number;
+  draft: Draft | null;
 };
+
+export type Draft = {
+  language: string;
+  code: string;
+  revision: number | null;
+  updated_at: string;
+  /** Saved on this laptop but never confirmed by the server (added by Rust). */
+  unsynced?: boolean;
+};
+
+export type TestFeedback = {
+  ordinal: number;
+  is_sample: boolean;
+  verdict: string;
+  time_ms: number | null;
+  input?: string | null;
+  expected_output?: string | null;
+  stdout?: string | null;
+  stderr?: string | null;
+  message?: string | null;
+};
+
+export type RunOut = {
+  passed: number;
+  total: number;
+  compile_output: string;
+  tests: TestFeedback[];
+  hidden_summary: string | null;
+};
+
+export type Receipt = { question_id: string; receipt: string };
 
 export type SessionView = {
   session_id: string;
@@ -83,7 +120,7 @@ export type SessionView = {
   seconds_left: number;
   finish_reason: string | null;
   questions: Question[];
-  receipts: { question_id: string; receipt: string }[];
+  receipts: Receipt[];
 };
 
 export const api = {
@@ -96,4 +133,20 @@ export const api = {
     invoke<SessionView>("start_exam", { examId, accessCode }),
   getSession: (sessionId: string) => invoke<SessionView>("get_session", { sessionId }),
   heartbeat: (sessionId: string) => invoke<Status>("heartbeat", { sessionId }),
+  saveAnswer: (sessionId: string, questionId: string, language: string, code: string, baseRevision: number | null) =>
+    invoke<{ revision: number; saved_at: string }>("save_answer", {
+      sessionId,
+      questionId,
+      language,
+      code,
+      baseRevision,
+    }),
+  runCode: (sessionId: string, questionId: string, language: string, code: string) =>
+    invoke<RunOut>("run_code", { sessionId, questionId, language, code }),
+  submitCode: (sessionId: string, questionId: string, language: string, code: string) =>
+    invoke<RunOut>("submit_code", { sessionId, questionId, language, code }),
+  finishExam: (sessionId: string) =>
+    invoke<{ status: SessionStatus; receipts: Receipt[] }>("finish_exam", { sessionId }),
+  reportBlockedPaste: (sessionId: string, chars: number) =>
+    invoke<Status>("report_blocked_paste", { sessionId, chars }),
 };

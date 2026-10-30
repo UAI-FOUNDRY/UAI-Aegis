@@ -183,6 +183,12 @@
           "markdownDescription": "Enables the change_password command without any pre-configured scope."
         },
         {
+          "description": "Enables the finish_exam command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-finish-exam",
+          "markdownDescription": "Enables the finish_exam command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_session command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-session",
@@ -213,16 +219,46 @@
           "markdownDescription": "Enables the logout command without any pre-configured scope."
         },
         {
+          "description": "Enables the report_blocked_paste command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-report-blocked-paste",
+          "markdownDescription": "Enables the report_blocked_paste command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the run_code command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-run-code",
+          "markdownDescription": "Enables the run_code command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_answer command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-answer",
+          "markdownDescription": "Enables the save_answer command without any pre-configured scope."
+        },
+        {
           "description": "Enables the start_exam command without any pre-configured scope.",
           "type": "string",
           "const": "allow-start-exam",
           "markdownDescription": "Enables the start_exam command without any pre-configured scope."
         },
         {
+          "description": "Enables the submit_code command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-submit-code",
+          "markdownDescription": "Enables the submit_code command without any pre-configured scope."
+        },
+        {
           "description": "Denies the change_password command without any pre-configured scope.",
           "type": "string",
           "const": "deny-change-password",
           "markdownDescription": "Denies the change_password command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the finish_exam command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-finish-exam",
+          "markdownDescription": "Denies the finish_exam command without any pre-configured scope."
         },
         {
           "description": "Denies the get_session command without any pre-configured scope.",
@@ -255,10 +291,34 @@
           "markdownDescription": "Denies the logout command without any pre-configured scope."
         },
         {
+          "description": "Denies the report_blocked_paste command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-report-blocked-paste",
+          "markdownDescription": "Denies the report_blocked_paste command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the run_code command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-run-code",
+          "markdownDescription": "Denies the run_code command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_answer command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-answer",
+          "markdownDescription": "Denies the save_answer command without any pre-configured scope."
+        },
+        {
           "description": "Denies the start_exam command without any pre-configured scope.",
           "type": "string",
           "const": "deny-start-exam",
           "markdownDescription": "Denies the start_exam command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the submit_code command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-submit-code",
+          "markdownDescription": "Denies the submit_code command without any pre-configured scope."
         },
         {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",

@@ -13,5 +13,7 @@ export default defineConfig({
   build: {
     target: "es2021",
     sourcemap: false,
+    // Monaco is large; fine for a desktop app that loads from disk.
+    chunkSizeWarningLimit: 5000,
   },
 });

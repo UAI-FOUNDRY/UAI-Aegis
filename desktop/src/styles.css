@@ -87,3 +87,50 @@ button.link { background: none; color: var(--accent); padding: 0; font-weight: 5
 .statement { white-space: pre-wrap; line-height: 1.5; }
 .receipts { padding-left: 1.2rem; word-break: break-all; }
 .beat { text-align: right; margin-top: 0.5rem; }
+
+/* ---- exam workspace ---- */
+:root { --ok: #1a7f37; --ok-bg: #e6f4ea; --notice-bg: #e8effc; }
+@media (prefers-color-scheme: dark) {
+  :root { --ok: #6fdd8b; --ok-bg: #16301e; --notice-bg: #1d2a44; }
+}
+.exam-room { max-width: 1280px; }
+.row.end { justify-content: flex-end; margin-top: 1rem; }
+button.danger { background: var(--danger); color: #fff; }
+.notice { background: var(--notice-bg); padding: 0.6rem 0.8rem; border-radius: 6px; }
+.workspace { display: grid; grid-template-columns: 64px 1fr; gap: 1rem; align-items: start; }
+.qnav { display: flex; flex-direction: column; gap: 0.4rem; position: sticky; top: 1rem; }
+.qtab {
+  position: relative; background: var(--card); color: var(--text); border: 1px solid var(--line); padding: 0.6rem 0;
+}
+.qtab.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.qtab .dot {
+  position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: #e3a008;
+}
+.qpane .card { max-width: none; }
+.md { line-height: 1.55; }
+.md code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 4px; font-size: 0.9em; }
+.md pre { background: var(--bg); padding: 0.7rem; border-radius: 6px; overflow-x: auto; }
+.md pre code { background: none; padding: 0; }
+.sample { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; margin: 0.75rem 0; }
+pre {
+  margin: 0.25rem 0 0; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 0.5rem 0.7rem; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto;
+}
+pre.bad { color: var(--danger); }
+.editor-card { padding: 0; overflow: hidden; }
+.toolbar { padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--line); }
+select {
+  padding: 0.45rem 0.6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text);
+  font-size: 0.95rem;
+}
+.editor { height: 420px; }
+.pill.ok { color: var(--ok); background: var(--ok-bg); border-color: transparent; }
+.pill.bad { color: var(--danger); background: var(--danger-bg); border-color: transparent; }
+.results h2 { margin-bottom: 0.5rem; }
+.test { border-top: 1px solid var(--line); padding: 0.6rem 0; }
+.test summary { cursor: pointer; }
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center;
+  padding: 1rem; z-index: 10;
+}
+.modal { margin: 0; width: 100%; }

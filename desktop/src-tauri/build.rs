@@ -9,7 +9,12 @@ fn main() {
             "list_exams",
             "start_exam",
             "get_session",
+            "save_answer",
+            "run_code",
+            "submit_code",
+            "finish_exam",
             "heartbeat",
+            "report_blocked_paste",
         ]),
     ))
     .expect("failed to run tauri-build");

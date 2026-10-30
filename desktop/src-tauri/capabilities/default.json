@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Only the commands the exam UI needs. No file system, shell or generic signing access.",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "allow-login",
     "allow-change-password",
@@ -10,6 +12,11 @@
     "allow-list-exams",
     "allow-start-exam",
     "allow-get-session",
-    "allow-heartbeat"
+    "allow-save-answer",
+    "allow-run-code",
+    "allow-submit-code",
+    "allow-finish-exam",
+    "allow-heartbeat",
+    "allow-report-blocked-paste"
   ]
 }

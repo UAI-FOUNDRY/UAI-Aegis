@@ -15,11 +15,15 @@ pub struct ApiError {
     pub status: u16,
     pub code: String,
     pub message: String,
+    /// The whole `detail` object when the server sent extra fields
+    /// (e.g. `revision` on 409 stale_revision).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
 }
 
 impl ApiError {
     pub fn local(code: &str, message: impl Into<String>) -> Self {
-        Self { status: 0, code: code.into(), message: message.into() }
+        Self { status: 0, code: code.into(), message: message.into(), details: None }
     }
 }
 
@@ -187,6 +191,7 @@ fn parse_error(status: StatusCode, raw: &[u8]) -> ApiError {
         status: status.as_u16(),
         code: format!("http_{}", status.as_u16()),
         message: format!("The server answered {status}."),
+        details: None,
     };
     let Ok(v) = serde_json::from_slice::<Value>(raw) else { return fallback() };
     let detail = &v["detail"];
@@ -195,8 +200,9 @@ fn parse_error(status: StatusCode, raw: &[u8]) -> ApiError {
             status: status.as_u16(),
             code: detail["code"].as_str().unwrap_or("error").to_string(),
             message: detail["message"].as_str().unwrap_or("Something went wrong.").to_string(),
+            details: Some(detail.clone()),
         },
-        Value::String(s) => ApiError { status: status.as_u16(), code: "error".into(), message: s.clone() },
+        Value::String(s) => ApiError { status: status.as_u16(), code: "error".into(), message: s.clone(), details: None },
         Value::Array(items) => ApiError {
             status: status.as_u16(),
             code: "invalid_request".into(),
@@ -205,6 +211,7 @@ fn parse_error(status: StatusCode, raw: &[u8]) -> ApiError {
                 .and_then(|i| i["msg"].as_str())
                 .unwrap_or("Invalid request.")
                 .to_string(),
+            details: None,
         },
         _ => fallback(),
     }
