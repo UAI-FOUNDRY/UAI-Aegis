@@ -68,6 +68,33 @@ const VERDICTS: Record<string, string> = {
   IE: "Server error",
 };
 
+/** Test data as text. ML/SQL questions send JSON like {"train": "csv...", "test": "csv..."}:
+ *  show each part as its own block with real line breaks instead of one escaped line. */
+function TestData({ text }: { text: string | null | undefined }) {
+  const raw = text ?? "";
+  let parts: [string, string][] | null = null;
+  try {
+    const v = JSON.parse(raw);
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const entries = Object.entries(v);
+      if (entries.length > 0 && entries.every(([, x]) => typeof x === "string")) parts = entries as [string, string][];
+    }
+  } catch {
+    // plain text input
+  }
+  if (!parts) return <pre>{raw}</pre>;
+  return (
+    <>
+      {parts.map(([name, value]) => (
+        <div key={name} className="data-part">
+          <div className="muted">{name}</div>
+          <pre>{value}</pre>
+        </div>
+      ))}
+    </>
+  );
+}
+
 export default function ExamRoom({
   initial,
   onLeave,
@@ -415,7 +442,7 @@ export default function ExamRoom({
                   <div key={s.ordinal} className="sample">
                     <div>
                       <div className="muted">Sample input {s.ordinal}</div>
-                      <pre>{s.input}</pre>
+                      <TestData text={s.input} />
                     </div>
                     <div>
                       <div className="muted">Expected output</div>
@@ -532,7 +559,7 @@ function ResultPanel({ result }: { result: Result }) {
             <div className="sample">
               <div>
                 <div className="muted">Input</div>
-                <pre>{t.input}</pre>
+                <TestData text={t.input} />
               </div>
               <div>
                 <div className="muted">Expected</div>

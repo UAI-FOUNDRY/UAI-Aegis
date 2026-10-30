@@ -134,3 +134,4 @@ select {
   padding: 1rem; z-index: 10;
 }
 .modal { margin: 0; width: 100%; }
+.data-part + .data-part { margin-top: 0.5rem; }
