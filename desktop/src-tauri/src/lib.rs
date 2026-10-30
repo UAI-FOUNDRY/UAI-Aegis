@@ -18,7 +18,20 @@ pub fn run() {
             app.state::<commands::AppState>().set_app(app.handle().clone());
             lockdown::start_monitor(app.handle().clone());
             #[cfg(windows)]
-            lockdown::win32::start_keyboard_hook();
+            {
+                lockdown::win32::start_keyboard_hook();
+                if lockdown::secure_desktop::on_secure_desktop() {
+                    // Nothing else lives on the exam desktop: the app always fills the screen
+                    // and cannot be minimised (there is no taskbar to bring it back).
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.set_minimizable(false);
+                        let _ = w.set_fullscreen(true);
+                        let _ = w.set_focus();
+                    }
+                    lockdown::start_desktop_guard(app.handle().clone());
+                    lockdown::secure_desktop::child_ready();
+                }
+            }
             Ok(())
         })
         .on_window_event(|window, event| match event {
@@ -41,6 +54,7 @@ pub fn run() {
             commands::heartbeat,
             commands::report_blocked_paste,
             commands::precheck,
+            commands::quit_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running UAI Aegis");

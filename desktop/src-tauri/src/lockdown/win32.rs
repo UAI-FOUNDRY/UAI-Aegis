@@ -8,15 +8,18 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+use windows_sys::Win32::Foundation::{GetLastError, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::Diagnostics::Debug::IsDebuggerPresent;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_F4, VK_LWIN, VK_MENU, VK_Q, VK_RWIN, VK_SHIFT, VK_SNAPSHOT, VK_TAB,
 };
+use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetMessageW, GetSystemMetrics, SetWindowsHookExW, TranslateMessage,
-    KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, MSG, SM_REMOTESESSION, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+    CallNextHookEx, DispatchMessageW, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, SetWindowLongPtrW,
+    SetWindowPos, SetWindowsHookExW, TranslateMessage, GWL_EXSTYLE, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, MSG,
+    SM_REMOTESESSION, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WH_KEYBOARD_LL,
+    WM_KEYDOWN, WM_SYSKEYDOWN, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
 };
 
 static BLOCKING: AtomicBool = AtomicBool::new(false);
@@ -26,6 +29,9 @@ static HOOK_STARTED: AtomicBool = AtomicBool::new(false);
 
 pub fn set_blocking(on: bool) {
     BLOCKING.store(on, Ordering::SeqCst);
+    if cfg!(debug_assertions) {
+        eprintln!("[aegis] shortcut blocking {}", if on { "ON" } else { "off" });
+    }
 }
 
 /// Shortcuts swallowed since the last call.
@@ -68,6 +74,9 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
         if block {
             if is_down {
                 BLOCKED_COUNT.fetch_add(1, Ordering::SeqCst);
+                if cfg!(debug_assertions) {
+                    eprintln!("[aegis] blocked key 0x{vk:02x} (alt={alt} ctrl={ctrl})");
+                }
             }
             return 1; // swallow the key
         }
@@ -86,14 +95,41 @@ pub fn start_keyboard_hook() {
         let module = GetModuleHandleW(std::ptr::null());
         let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), module, 0);
         if hook.is_null() {
+            eprintln!("[aegis] keyboard hook FAILED to install (error {})", GetLastError());
             return;
         }
+        eprintln!("[aegis] keyboard hook installed");
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
     });
+}
+
+/// Tool windows are shown on every virtual desktop and are left out of Alt+Tab, so a
+/// touchpad swipe to another desktop (which no app can block) still lands on the exam.
+/// Call while the window is hidden; the shell re-reads the style when it is shown again.
+pub fn show_on_all_desktops(hwnd: HWND, on: bool) {
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let tool = WS_EX_TOOLWINDOW as isize;
+        let app = WS_EX_APPWINDOW as isize;
+        let new = if on { (ex | tool) & !app } else { (ex & !tool) | app };
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new);
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+    if cfg!(debug_assertions) {
+        eprintln!("[aegis] all virtual desktops {}", if on { "ON" } else { "off" });
+    }
 }
 
 /// Running inside a Remote Desktop (RDP) session.

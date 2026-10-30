@@ -27,7 +27,7 @@ pub const API_URL: &str = match option_env!("AEGIS_API_URL") {
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Focus must stay lost this long before it counts (a notification flicker should not).
-const FOCUS_GRACE_MS: u64 = 2000;
+const FOCUS_GRACE_MS: u64 = 1500;
 /// Same limit as the server (64 KB).
 const MAX_CODE_BYTES: usize = 64 * 1024;
 
@@ -217,6 +217,9 @@ pub(crate) async fn report_event(state: &AppState, session_id: &str, kind: &str,
 pub fn on_focus_changed(app: &AppHandle, focused: bool) {
     let state = app.state::<AppState>();
     let generation = state.focus_gen.fetch_add(1, Ordering::SeqCst) + 1;
+    if cfg!(debug_assertions) {
+        eprintln!("[aegis] window {}", if focused { "focused" } else { "lost focus" });
+    }
     if focused {
         return;
     }
@@ -225,10 +228,23 @@ pub fn on_focus_changed(app: &AppHandle, focused: bool) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_millis(FOCUS_GRACE_MS)).await;
         let state = app.state::<AppState>();
-        if state.focus_gen.load(Ordering::SeqCst) != generation || state.active().as_deref() != Some(&session_id) {
-            return; // focus came back in time, or the exam ended
+        let still_away = |state: &AppState| {
+            state.focus_gen.load(Ordering::SeqCst) == generation && state.active().as_deref() == Some(session_id.as_str())
+        };
+        if !still_away(&state) {
+            return; // focus came back in time (a notification flicker), or the exam ended
         }
+        // A real departure (touchpad gesture to another desktop, Win+D, a click on another
+        // window...). Gestures cannot be blocked by any app, so: count it, then pull the
+        // student back to the exam until the window has focus again.
         let _ = report_event(&state, &session_id, "focus_lost", json!({"grace_ms": FOCUS_GRACE_MS})).await;
+        for _ in 0..600 {
+            if !still_away(&state) || !crate::lockdown::engaged() {
+                break;
+            }
+            crate::lockdown::pull_back(&app);
+            tokio::time::sleep(Duration::from_millis(1000)).await;
+        }
     });
 }
 
@@ -455,4 +471,15 @@ pub async fn precheck(app: AppHandle) -> Result<PrecheckResult, ApiError> {
         .await
         .map_err(|_| ApiError::local("precheck_failed", "Could not check this laptop."))?;
     Ok(PrecheckResult { ok: problems.is_empty(), problems })
+}
+
+/// "Quit" button: close the app (and, on Windows, return to the normal desktop).
+/// Refused while an exam is on screen.
+#[tauri::command]
+pub fn quit_app(app: AppHandle) -> Result<(), ApiError> {
+    if crate::lockdown::engaged() {
+        return Err(ApiError::local("exam_running", "Finish the exam first."));
+    }
+    app.exit(0);
+    Ok(())
 }

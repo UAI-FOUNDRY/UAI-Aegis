@@ -18,6 +18,7 @@
     "allow-finish-exam",
     "allow-heartbeat",
     "allow-report-blocked-paste",
-    "allow-precheck"
+    "allow-precheck",
+    "allow-quit-app"
   ]
 }

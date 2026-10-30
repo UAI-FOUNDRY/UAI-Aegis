@@ -10,6 +10,8 @@
 
 pub mod detect;
 #[cfg(windows)]
+pub mod secure_desktop;
+#[cfg(windows)]
 pub mod win32;
 
 use std::collections::HashSet;
@@ -59,6 +61,16 @@ pub fn engage(app: &AppHandle) {
     }
     ENGAGED_AT_MS.store(now_ms(), Ordering::SeqCst);
     if let Some(w) = app.get_webview_window("main") {
+        // On the normal desktop (fallback): show the window on every virtual desktop.
+        // On the separate exam desktop there are no virtual desktops, so skip it.
+        #[cfg(windows)]
+        if !secure_desktop::on_secure_desktop() {
+            if let Ok(hwnd) = w.hwnd() {
+                let _ = w.hide();
+                win32::show_on_all_desktops(hwnd.0, true);
+                let _ = w.show();
+            }
+        }
         let _ = w.set_content_protected(true); // Windows: excluded from capture; macOS: sharing type none
         let _ = w.set_minimizable(false);
         let _ = w.set_closable(false);
@@ -71,6 +83,23 @@ pub fn engage(app: &AppHandle) {
     win32::set_blocking(true);
 }
 
+/// Bring the exam window back to the front (after a gesture, Win+D, a click elsewhere).
+/// On Windows this also switches back from another virtual desktop.
+pub fn pull_back(app: &AppHandle) {
+    if !engaged() {
+        return;
+    }
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_always_on_top(true);
+        if !w.is_fullscreen().unwrap_or(false) {
+            let _ = w.set_fullscreen(true);
+        }
+        let _ = w.set_focus();
+    }
+}
+
 /// Back to a normal window (exam finished, signed out).
 pub fn release(app: &AppHandle) {
     if !ENGAGED.swap(false, Ordering::SeqCst) {
@@ -79,12 +108,67 @@ pub fn release(app: &AppHandle) {
     #[cfg(windows)]
     win32::set_blocking(false);
     if let Some(w) = app.get_webview_window("main") {
+        #[cfg(windows)]
+        if secure_desktop::on_secure_desktop() {
+            // Nothing else is on this desktop (no taskbar to bring a minimised window
+            // back), so stay full screen; only the exam-time restrictions are lifted.
+            let _ = w.set_always_on_top(false);
+            let _ = w.set_closable(true);
+            let _ = w.set_content_protected(false);
+            return;
+        }
+        #[cfg(windows)]
+        if let Ok(hwnd) = w.hwnd() {
+            let _ = w.hide();
+            win32::show_on_all_desktops(hwnd.0, false);
+            let _ = w.show();
+        }
         let _ = w.set_fullscreen(false);
         let _ = w.set_always_on_top(false);
         let _ = w.set_closable(true);
         let _ = w.set_minimizable(true);
         let _ = w.set_content_protected(false);
     }
+}
+
+/// Windows, separate exam desktop: if the screen leaves our desktop (Ctrl+Alt+Del then
+/// Task Manager, a fast user switch...), switch it straight back and, during an exam,
+/// report it once per departure. Checked twice a second.
+#[cfg(windows)]
+pub fn start_desktop_guard(app: AppHandle) {
+    if !secure_desktop::on_secure_desktop() {
+        return;
+    }
+    std::thread::spawn(move || {
+        let mut away = false;
+        loop {
+            std::thread::sleep(Duration::from_millis(500));
+            match secure_desktop::input_desktop_name() {
+                Some(name) if name != secure_desktop::DESKTOP_NAME => {
+                    secure_desktop::switch_to_exam_desktop();
+                    if !away {
+                        away = true;
+                        let state = app.state::<crate::commands::AppState>();
+                        if let (true, Some(session_id)) = (engaged(), state.active_session()) {
+                            let app = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let state = app.state::<crate::commands::AppState>();
+                                let _ = crate::commands::report_event(
+                                    &state,
+                                    &session_id,
+                                    "focus_lost",
+                                    json!({"left_exam_desktop_for": name}),
+                                )
+                                .await;
+                            });
+                        }
+                    }
+                }
+                Some(_) => away = false,
+                None => {} // Ctrl+Alt+Del / UAC screen: cannot switch away from it
+            }
+        }
+    });
 }
 
 /// Is the window actually covering the whole screen? The window library only remembers
@@ -119,8 +203,13 @@ pub fn start_monitor(app: AppHandle) {
             let state = app.state::<crate::commands::AppState>();
 
             #[cfg(windows)]
-            if win32::dev_escape_used() && engaged() {
-                release(&app); // Ctrl+Alt+Shift+Q in a development build
+            if win32::dev_escape_used() {
+                if secure_desktop::on_secure_desktop() {
+                    secure_desktop::leave_and_exit(); // Ctrl+Alt+Shift+Q in a development build
+                }
+                if engaged() {
+                    release(&app);
+                }
             }
 
             let session = state.active_session();

@@ -26,14 +26,16 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <span className="brand">UAI Aegis</span>
-        {user && (
-          <span className="who">
-            {user.full_name}
-            {screen.name !== "exam" && (
-              <button className="link" onClick={signOut}>Sign out</button>
-            )}
-          </span>
-        )}
+        <span className="who">
+          {user?.full_name}
+          {user && screen.name !== "exam" && (
+            <button className="link" onClick={signOut}>Sign out</button>
+          )}
+          {/* On Windows the app runs on its own desktop with no taskbar: this is the way out. */}
+          {screen.name !== "exam" && (
+            <button className="link" onClick={() => api.quitApp().catch(() => undefined)}>Quit</button>
+          )}
+        </span>
       </header>
       <main>
         {screen.name === "login" && (

@@ -30,7 +30,18 @@ Specs: `docs/CLIENT_PROTOCOL.md` (the protocol), `backend/app/security/signing.p
   reported once: extra displays, VMs (CPUID + firmware strings), Remote Desktop session,
   remote-control / screen-sharing / recording apps, debugger (release builds, Windows).
 
-Development builds only: `$env:AEGIS_LOCKDOWN="off"` before `npm run tauri dev` disables the
+- Windows: the whole app runs on its own Win32 desktop (`lockdown/secure_desktop.rs`, like Safe
+  Exam Browser): no taskbar, Start menu, Alt+Tab thumbnails, gestures or other apps. The
+  launcher process switches the screen there and back; the app on that desktop switches the
+  screen straight back if the student leaves it (e.g. Ctrl+Alt+Del then Task Manager) and
+  reports `focus_lost`. If the desktop cannot be set up, it falls back to the normal desktop.
+  The "Quit" button (outside exams) returns to normal Windows. While the app runs, the
+  per-user policies DisableTaskMgr, DisableLockWorkstation and DisableChangePassword are on
+  (Task Manager would otherwise open on the exam desktop); the student's previous values are
+  saved and restored on exit, or on the next start after a crash.
+
+Development builds only: `$env:AEGIS_SECURE_DESKTOP="off"` keeps the app on the normal desktop;
+`$env:AEGIS_LOCKDOWN="off"` before `npm run tauri dev` disables the
 lockdown; Ctrl+Alt+Shift+Q turns it off mid-run (Windows); `AEGIS_ALLOW_VM=1` skips the VM
 check. Release builds ignore all three.
 
@@ -53,7 +64,7 @@ desktop/
     src/drafts.rs      encrypted local copy of answers (tests: round trip, tamper, wrong session)
     src/client.rs      HTTP client: serialise once, sign, send the same bytes; error parsing
     src/commands.rs    the commands the UI may call + focus-loss reporting
-    src/lockdown/      kiosk + detection loop (mod.rs), checks (detect.rs), Windows hook/RDP/BIOS (windows.rs)
+    src/lockdown/      kiosk + detection loop (mod.rs), checks (detect.rs), Windows hook/RDP/BIOS (win32.rs), exam desktop (secure_desktop.rs)
     tests/live_backend.rs   full signed flow against a running backend
     build.rs, capabilities/default.json   command allow-list
     tauri.conf.json    window, CSP, bundle

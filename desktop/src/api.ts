@@ -147,6 +147,7 @@ export const api = {
     invoke<RunOut>("submit_code", { sessionId, questionId, language, code }),
   finishExam: (sessionId: string) =>
     invoke<{ status: SessionStatus; receipts: Receipt[] }>("finish_exam", { sessionId }),
+  quitApp: () => invoke<void>("quit_app"),
   precheck: () => invoke<{ ok: boolean; problems: { kind: string; message: string }[] }>("precheck"),
   reportBlockedPaste: (sessionId: string, chars: number) =>
     invoke<Status>("report_blocked_paste", { sessionId, chars }),

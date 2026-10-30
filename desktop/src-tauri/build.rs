@@ -16,6 +16,7 @@ fn main() {
             "heartbeat",
             "report_blocked_paste",
             "precheck",
+            "quit_app",
         ]),
     ))
     .expect("failed to run tauri-build");
