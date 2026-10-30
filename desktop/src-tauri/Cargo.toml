@@ -1,0 +1,42 @@
+[package]
+name = "uai-aegis"
+version = "0.1.0"
+description = "UAI Aegis student exam app"
+edition = "2021"
+
+[lib]
+# The `_lib` suffix avoids a name clash with the binary on Windows.
+name = "uai_aegis_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync"] }
+# HTTP to the exam server. rustls = no OpenSSL to install on any OS.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Device key + request signing (docs/CLIENT_PROTOCOL.md section 2 and 3)
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+uuid = "1"
+
+# OS keychain for the private key. keyring 3 needs the backend chosen per OS,
+# otherwise it silently uses an in-memory mock store.
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

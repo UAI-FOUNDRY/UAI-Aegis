@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-exams"
+description = "Enables the list_exams command without any pre-configured scope."
+commands.allow = ["list_exams"]
+
+[[permission]]
+identifier = "deny-list-exams"
+description = "Denies the list_exams command without any pre-configured scope."
+commands.deny = ["list_exams"]
