@@ -1,0 +1,391 @@
+:root {
+  --text: #6b6375;
+  --text-h: #08060d;
+  --bg: #fff;
+  --border: #e5e4e7;
+  --code-bg: #f4f3ec;
+  --accent: #aa3bff;
+  --accent-bg: rgba(170, 59, 255, 0.1);
+  --accent-border: rgba(170, 59, 255, 0.5);
+  --social-bg: rgba(244, 243, 236, 0.5);
+  --shadow:
+    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+
+  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+
+  font: 18px/145% var(--sans);
+  letter-spacing: 0.18px;
+  color-scheme: light dark;
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  @media (max-width: 1024px) {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #9ca3af;
+    --text-h: #f3f4f6;
+    --bg: #16171d;
+    --border: #2e303a;
+    --code-bg: #1f2028;
+    --accent: #c084fc;
+    --accent-bg: rgba(192, 132, 252, 0.15);
+    --accent-border: rgba(192, 132, 252, 0.5);
+    --social-bg: rgba(47, 48, 58, 0.5);
+    --shadow:
+      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+  }
+
+  #social .button-icon {
+    filter: invert(1) brightness(2);
+  }
+}
+
+#root {
+  width: 1126px;
+  max-width: 100%;
+  margin: 0 auto;
+  text-align: center;
+  border-inline: 1px solid var(--border);
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+h1,
+h2 {
+  font-family: var(--heading);
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+h1 {
+  font-size: 56px;
+  letter-spacing: -1.68px;
+  margin: 32px 0;
+  @media (max-width: 1024px) {
+    font-size: 36px;
+    margin: 20px 0;
+  }
+}
+h2 {
+  font-size: 24px;
+  line-height: 118%;
+  letter-spacing: -0.24px;
+  margin: 0 0 8px;
+  @media (max-width: 1024px) {
+    font-size: 20px;
+  }
+}
+p {
+  margin: 0;
+}
+
+code,
+.counter {
+  font-family: var(--mono);
+  display: inline-flex;
+  border-radius: 4px;
+  color: var(--text-h);
+}
+
+code {
+  font-size: 15px;
+  line-height: 135%;
+  padding: 4px 8px;
+  background: var(--code-bg);
+}
+
+
+
+.app-toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 99999;
+  width: min(400px, calc(100vw - 32px));
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+  animation: app-toast-enter 180ms ease-out;
+}
+
+.app-toast__content {
+  min-width: 0;
+}
+
+.app-toast__content strong {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 15px;
+}
+
+.app-toast__content p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.app-toast--error {
+  color: #991b1b;
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+
+.app-toast--success {
+  color: #166534;
+  background: #f0fdf4;
+  border-color: #86efac;
+}
+
+.app-toast--info {
+  color: #1e40af;
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+
+.app-toast__close {
+  flex-shrink: 0;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+@keyframes app-toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 600px) {
+  .app-toast {
+    top: 12px;
+    right: 12px;
+    width: calc(100vw - 24px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-toast {
+    animation: none;
+  }
+}
+
+.ui-toast-container {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 100000;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(400px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.ui-toast-container .ui-toast {
+  pointer-events: auto;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 16px;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+  overflow-wrap: anywhere;
+}
+
+.ui-toast--error {
+  color: #991b1b;
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+}
+
+.ui-toast--success {
+  color: #166534;
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+}
+
+.ui-toast--info {
+  color: #1e40af;
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+}
+
+.ui-toast__close {
+  margin-left: 12px;
+  cursor: pointer;
+}
+
+@media (max-width: 600px) {
+  .ui-toast-container {
+    top: 12px;
+    right: 12px;
+    width: calc(100vw - 24px);
+  }
+}
+
+/* Live monitor: flash a row when a student is locked or switches laptop */
+@keyframes monitor-row-flash {
+  0%, 50%, 100% { background-color: #fecaca; }
+  25%, 75% { background-color: #fff7ed; }
+}
+
+.monitor-row--flash {
+  animation: monitor-row-flash 1s ease-in-out 4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .monitor-row--flash {
+    animation: none;
+    outline: 3px solid #dc2626;
+    outline-offset: -3px;
+  }
+}
+
+.monitor-table th,
+.monitor-table td {
+  padding: 8px 10px;
+}
+
+/* A button that looks like a link (student names, table rows that open details) */
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #1d4ed8;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-button:focus-visible {
+  outline: 2px solid #1d4ed8;
+  outline-offset: 2px;
+}
+
+/* Step 11: code viewer and three-column session layout */
+.code-view {
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: pre;
+}
+
+/* The global `code` rule (inline-flex, padded pill) breaks multi-line code. */
+.code-view code {
+  display: block;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  white-space: pre;
+}
+
+.session-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2.2fr) minmax(220px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1000px) {
+  .session-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Step 12: admin area with a side menu (stacks on small screens) */
+.admin-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 24px;
+  max-width: 1200px;
+  margin: 24px auto;
+  padding: 16px;
+}
+
+.admin-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: sticky;
+  top: 16px;
+  align-self: start;
+}
+
+.admin-nav__item {
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-nav__item:hover {
+  background: #f3f4f6;
+}
+
+.admin-nav__item.is-active {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  font-weight: bold;
+}
+
+.admin-content h2 {
+  font-size: 22px;
+  letter-spacing: normal;
+}
+
+@media (max-width: 800px) {
+  .admin-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
