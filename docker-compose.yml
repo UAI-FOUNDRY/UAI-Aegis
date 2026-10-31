@@ -51,7 +51,9 @@ services:
   # It needs privileged containers and, for version 1.13, cgroup v1 on the host:
   # see judge/README.md before starting it.
   judge0:
-    image: judge0/judge0:1.13.1
+    # Judge0 plus NumPy, pandas, matplotlib, seaborn and scikit-learn for ML labs (judge/Dockerfile.ml)
+    build: {context: ./judge, dockerfile: Dockerfile.ml}
+    image: aegis-judge0-ml:1.13.1
     profiles: ["judge"]
     volumes:
       - ./judge/judge0.conf:/judge0.conf:ro
@@ -60,7 +62,8 @@ services:
     # No published port: only the API talks to Judge0, over the compose network.
 
   judge0-workers:
-    image: judge0/judge0:1.13.1
+    build: {context: ./judge, dockerfile: Dockerfile.ml}
+    image: aegis-judge0-ml:1.13.1
     profiles: ["judge"]
     command: ["./scripts/workers"]
     volumes:
