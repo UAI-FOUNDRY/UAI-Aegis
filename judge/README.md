@@ -29,6 +29,25 @@ docker compose exec api python -m app.cli check-judge0
 Fix any mismatch from the admin API (`PATCH /api/v1/admin/languages/{id}`); languages
 are data, not code.
 
+## Machine Learning / Data Science labs (`python3-ml`)
+
+`docker compose` builds Judge0 from `judge/Dockerfile.ml`, which adds NumPy, pandas,
+matplotlib, seaborn, scikit-learn and SciPy to Judge0's Python 3.8.1. The `python3-ml`
+language uses that Python (language id 71). After starting Judge0, check everything with
+the ready-made BML lab (one question per practical, each validated):
+
+```bash
+docker compose exec api python -m app.cli bml-lab --url http://localhost:8000
+```
+
+Notes:
+- ML answers need memory: the BML questions ask for 512000 KB, which is Judge0's
+  `MAX_MEMORY_LIMIT` in `judge0.conf`. Raise both if a lab needs more.
+- The ML and plot graders limit NumPy/BLAS to one thread, because Judge0 allows at most
+  `MAX_PROCESSES_AND_OR_THREADS` (60) per run.
+- On a laptop without Judge0, `AEGIS_EXECUTOR=local_dev` runs `python3-ml` answers with
+  `backend/.venv-ml` (see the README there).
+
 ## Known setup issue
 
 Judge0 1.13 needs **cgroup v1** on the host. Many current Linux distributions (and
