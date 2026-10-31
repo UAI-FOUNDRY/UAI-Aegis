@@ -69,7 +69,7 @@ def build_executor(settings: Settings) -> Executor:
             poll_interval=settings.judge0_poll_interval_seconds,
             timeout=settings.judge0_timeout_seconds,
         )
-    return LocalDevExecutor()
+    return LocalDevExecutor(ml_python=settings.ml_python_path)
 
 
 def build_state(settings: Settings, executor: Executor | None = None) -> AppState:

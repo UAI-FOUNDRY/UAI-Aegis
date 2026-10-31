@@ -136,6 +136,7 @@ class Grader(ABC):
     description: str = ""
     needs_expected: bool = True  # every test must have an expected output before an exam opens
     can_generate_expected: bool = True  # expected outputs can come from the reference solution
+    needs_python: bool = False  # the answer runs inside a Python harness (RunTarget.python), e.g. SQL, HTML
 
     @abstractmethod
     def validate_config(self, config: dict[str, Any]) -> dict[str, Any]:
