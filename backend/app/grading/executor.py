@@ -210,8 +210,12 @@ def _limits(memory_kb: int, cpu_seconds: int):  # pragma: no cover - runs in the
     return apply
 
 
-def _child_env() -> dict[str, str]:
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONIOENCODING": "utf-8", "PYTHONHASHSEED": "0"}
+def _child_env(workdir: str | None = None) -> dict[str, str]:
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONIOENCODING": "utf-8", "PYTHONHASHSEED": "0",
+           # Plots are drawn off-screen (no display in a sandbox); matplotlib caches fonts in the run folder.
+           "MPLBACKEND": "Agg"}
+    if workdir:
+        env["MPLCONFIGDIR"] = workdir
     if os.name == "nt":  # Python cannot start on Windows without these
         for name in ("SYSTEMROOT", "SystemRoot", "TEMP", "TMP", "WINDIR"):
             if name in os.environ:
@@ -224,7 +228,7 @@ def _run_capped(args: list[str], stdin: bytes, cwd: str, timeout_s: float, preex
     including the one uvicorn uses with --reload on Windows). Returns
     (exit code, stdout, stderr, timed_out, output_capped, seconds)."""
     proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            cwd=cwd, env=_child_env(), preexec_fn=preexec)
+                            cwd=cwd, env=_child_env(cwd), preexec_fn=preexec)
     capped = threading.Event()
     buffers: dict[str, bytearray] = {"out": bytearray(), "err": bytearray()}
 
@@ -271,8 +275,16 @@ class LocalDevExecutor(Executor):
 
     PYTHON_KEYS = {"python3", "python", "python3-ml"}
 
-    def __init__(self, max_concurrency: int = 4) -> None:
+    def __init__(self, max_concurrency: int = 4, ml_python: str | None = None) -> None:
         self._sem = asyncio.Semaphore(max_concurrency)
+        # 'python3-ml' answers need numpy/pandas/scikit-learn/matplotlib/seaborn. They run with
+        # this interpreter (a separate virtualenv), so the API's own environment stays small.
+        self._ml_python = ml_python
+
+    def _interpreter(self, language_key: str) -> str:
+        if language_key == "python3-ml" and self._ml_python:
+            return self._ml_python
+        return sys.executable
 
     async def run_batch(self, requests: list[ExecRequest]) -> list[ExecResult]:
         return list(await asyncio.gather(*(self._run_one(r) for r in requests)))
@@ -291,14 +303,17 @@ class LocalDevExecutor(Executor):
                 preexec = _limits(req.memory_limit_kb, math.ceil(limit_s) + 1) if os.name == "posix" else None
                 try:
                     code, out, err, timed_out, capped, elapsed = await asyncio.to_thread(
-                        _run_capped, [sys.executable, "-I", str(path)], req.stdin.encode("utf-8"), workdir,
+                        _run_capped, [self._interpreter(req.language_key), "-I", str(path)],
+                        req.stdin.encode("utf-8"), workdir,
                         limit_s + 0.5, preexec,
                     )
                 except OSError as exc:
                     return ExecResult(ExecStatus.internal_error, message=f"could not start Python: {exc}")
         elapsed_ms = int(elapsed * 1000)
-        stdout = out.decode("utf-8", errors="replace")
-        stderr = err.decode("utf-8", errors="replace")
+        # Python on Windows writes "\r\n" to pipes; Judge0 (Linux) gives "\n". Normalise, so
+        # expected outputs generated on a Windows laptop match what the server produces.
+        stdout = out.decode("utf-8", errors="replace").replace("\r\n", "\n")
+        stderr = err.decode("utf-8", errors="replace").replace("\r\n", "\n")
         if timed_out:
             return ExecResult(ExecStatus.time_limit, stdout, stderr, time_ms=req.time_limit_ms)
         if capped:

@@ -185,7 +185,7 @@ async def build_target(
     state: AppState, question: Question, language: Language, code: str, *, time_limit_ms: int | None = None
 ) -> RunTarget:
     python = None
-    if question.grader == "sql":  # SQL answers run inside a small Python harness
+    if get_grader(question.grader).needs_python:  # SQL and HTML answers run inside a small Python harness
         async with state.sessionmaker() as db:
             py = await db.scalar(select(Language).where(Language.key == "python3"))
         if py is not None:

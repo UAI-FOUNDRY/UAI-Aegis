@@ -50,6 +50,8 @@ DEFAULT_LANGUAGES = [
          is_enabled=False),
     # SQL answers run in a Python + SQLite harness (the python3 row's judge0_id is used).
     dict(key="sql", name="SQL (SQLite)", judge0_id=82, file_name="query.sql", monaco_id="sql", time_multiplier=2.0),
+    # HTML pages are parsed in a Python harness (the python3 row's judge0_id is used), never rendered.
+    dict(key="html", name="HTML", judge0_id=71, file_name="index.html", monaco_id="html", time_multiplier=1.0),
     # Point judge0_id at a Python runtime that has numpy/pandas/scikit-learn installed.
     dict(key="python3-ml", name="Python 3 (ML)", judge0_id=71, file_name="main.py", monaco_id="python",
          time_multiplier=3.0),
