@@ -3,6 +3,7 @@ mod commands;
 pub mod drafts;
 mod keystore;
 pub mod lockdown;
+mod navguard;
 pub mod signing;
 
 use tauri::{Manager, WindowEvent};
@@ -13,6 +14,7 @@ pub fn run() {
         commands::build_sha256();
     });
     tauri::Builder::default()
+        .plugin(navguard::plugin())
         .manage(commands::AppState::new())
         .setup(|app| {
             app.state::<commands::AppState>().set_app(app.handle().clone());
