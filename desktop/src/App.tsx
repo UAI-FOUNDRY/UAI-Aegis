@@ -24,7 +24,7 @@ export default function App() {
   };
 
   return (
-    <div className="app">
+    <div className={`app ${screen.name === "exam" ? "in-exam" : ""}`}>
       <header className="topbar">
         <span className="brand">UAI Aegis</span>
         <span className="who">

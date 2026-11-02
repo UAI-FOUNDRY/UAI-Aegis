@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, isApiError, Receipt, RunOut, SessionView, Status } from "./api";
 import CodeEditor from "./CodeEditor";
 import { renderMarkdown } from "./markdown";
+import { Kind, questionKind, SampleView, TestResultView } from "./testdata";
 
 const HEARTBEAT_MS = 10_000; // CLIENT_PROTOCOL.md section 4
 const AUTOSAVE_MS = 5_000;
@@ -67,33 +68,6 @@ const VERDICTS: Record<string, string> = {
   CE: "Compile error",
   IE: "Server error",
 };
-
-/** Test data as text. ML/SQL questions send JSON like {"train": "csv...", "test": "csv..."}:
- *  show each part as its own block with real line breaks instead of one escaped line. */
-function TestData({ text }: { text: string | null | undefined }) {
-  const raw = text ?? "";
-  let parts: [string, string][] | null = null;
-  try {
-    const v = JSON.parse(raw);
-    if (v && typeof v === "object" && !Array.isArray(v)) {
-      const entries = Object.entries(v);
-      if (entries.length > 0 && entries.every(([, x]) => typeof x === "string")) parts = entries as [string, string][];
-    }
-  } catch {
-    // plain text input
-  }
-  if (!parts) return <pre>{raw}</pre>;
-  return (
-    <>
-      {parts.map(([name, value]) => (
-        <div key={name} className="data-part">
-          <div className="muted">{name}</div>
-          <pre>{value}</pre>
-        </div>
-      ))}
-    </>
-  );
-}
 
 export default function ExamRoom({
   initial,
@@ -376,16 +350,32 @@ export default function ExamRoom({
   const answer = q ? answers[q.id] : undefined;
   const language = q?.languages.find((l) => l.key === answer?.language) ?? q?.languages[0];
   const result = q ? results[q.id] : undefined;
+  const kind: Kind = q ? questionKind(q) : "stdio";
 
   return (
     <section className="exam-room">
       <div className="exam-bar">
-        <div>
+        <div className="exam-title">
           <strong>{view.exam_title}</strong>
           <div className="muted">
             Strikes: {status.strikes} · {status.strikes_left} left · {saveText}
           </div>
         </div>
+        {!locked && questions.length > 1 && (
+          <nav className="qnav">
+            {questions.map((x, i) => (
+              <button
+                key={x.id}
+                className={`qtab ${i === current ? "active" : ""}`}
+                onClick={() => setCurrent(i)}
+                title={x.title}
+              >
+                Q{x.ordinal}
+                {answers[x.id]?.dirty && <span className="dot" title="Not saved yet" />}
+              </button>
+            ))}
+          </nav>
+        )}
         <div className="row">
           <div className={`timer ${secondsLeft < 300 ? "low" : ""}`}>{formatTime(secondsLeft)}</div>
           <button className="danger" onClick={() => setConfirmFinish(true)} disabled={locked}>
@@ -411,52 +401,44 @@ export default function ExamRoom({
         q &&
         answer &&
         language && (
-          <div className="workspace">
-            <nav className="qnav">
-              {questions.map((x, i) => (
-                <button
-                  key={x.id}
-                  className={`qtab ${i === current ? "active" : ""}`}
-                  onClick={() => setCurrent(i)}
-                >
-                  Q{x.ordinal}
-                  {answers[x.id]?.dirty && <span className="dot" title="Not saved yet" />}
-                </button>
-              ))}
-            </nav>
-
-            <div className="qpane">
-              {view.instructions_md && current === 0 && (
-                <div className="card md" dangerouslySetInnerHTML={{ __html: instructionsHtml }} />
+          <Split>
+            {/* Left: the question */}
+            <div className="qside">
+              {view.instructions_md && (
+                <details className="instructions" open={current === 0}>
+                  <summary>Exam instructions</summary>
+                  <div className="md" dangerouslySetInnerHTML={{ __html: instructionsHtml }} />
+                </details>
               )}
-              <article className="card">
-                <div className="row between">
-                  <h2>
-                    Q{q.ordinal}. {q.title}
-                  </h2>
-                  <span className="pill">{q.marks} marks</span>
-                </div>
-                {/* Sanitised: raw HTML off + DOMPurify (section 8) */}
-                <div className="md" dangerouslySetInnerHTML={{ __html: statementHtml }} />
-                {q.samples.map((s) => (
-                  <div key={s.ordinal} className="sample">
-                    <div>
-                      <div className="muted">Sample input {s.ordinal}</div>
-                      <TestData text={s.input} />
-                    </div>
-                    <div>
-                      <div className="muted">Expected output</div>
-                      <pre>{s.expected_output}</pre>
-                    </div>
-                  </div>
-                ))}
-                <div className="muted">{q.hidden_test_count} hidden test(s) are checked when you Submit and after the exam.</div>
-              </article>
+              <div className="row between">
+                <h2>
+                  Q{q.ordinal}. {q.title}
+                </h2>
+                <span className="pill">{q.marks} marks</span>
+              </div>
+              {/* Sanitised: raw HTML off + DOMPurify (section 8) */}
+              <div className="md" dangerouslySetInnerHTML={{ __html: statementHtml }} />
+              {q.samples.map((s) => (
+                <section key={s.ordinal} className="sample-block">
+                  <h3>{kind === "checks" ? `Checks ${s.ordinal}` : `Example ${s.ordinal}`}</h3>
+                  <SampleView kind={kind} input={s.input} expected={s.expected_output} statement={q.statement_md} />
+                </section>
+              ))}
+              {q.hidden_test_count > 0 && (
+                <p className="muted">
+                  {q.hidden_test_count} hidden test{q.hidden_test_count === 1 ? " is" : "s are"} checked when you Submit
+                  and after the exam.
+                </p>
+              )}
+            </div>
 
-              <div className="card editor-card">
-                <div className="row between toolbar">
+            {/* Right: editor, Run / Submit, results */}
+            <div className="codeside">
+              <div className="row between toolbar">
+                {q.languages.length > 1 ? (
                   <select
                     value={answer.language}
+                    aria-label="Language"
                     onChange={(e) => {
                       const next = e.target.value;
                       const starterOld = q.starter_code[answer.language] ?? "";
@@ -474,15 +456,19 @@ export default function ExamRoom({
                       </option>
                     ))}
                   </select>
-                  <div className="row">
-                    <button className="secondary" disabled={!!busy[q.id]} onClick={() => execute(q.id, "run")}>
-                      {busy[q.id] === "run" ? "Running…" : "Run samples"}
-                    </button>
-                    <button disabled={!!busy[q.id]} onClick={() => execute(q.id, "submit")}>
-                      {busy[q.id] === "submit" ? "Checking…" : "Submit"}
-                    </button>
-                  </div>
+                ) : (
+                  <span className="pill lang">{language.name}</span>
+                )}
+                <div className="row">
+                  <button className="secondary" disabled={!!busy[q.id]} onClick={() => execute(q.id, "run")}>
+                    {busy[q.id] === "run" ? "Running…" : "Run samples"}
+                  </button>
+                  <button disabled={!!busy[q.id]} onClick={() => execute(q.id, "submit")}>
+                    {busy[q.id] === "submit" ? "Checking…" : "Submit"}
+                  </button>
                 </div>
+              </div>
+              <div className="editor-wrap">
                 <CodeEditor
                   key={q.id}
                   value={answer.code}
@@ -494,10 +480,15 @@ export default function ExamRoom({
                   onBlockedPaste={blockedPaste}
                 />
               </div>
-
-              {result && <ResultPanel result={result} />}
+              <ResultPanel
+                key={q.id}
+                result={result}
+                running={busy[q.id]}
+                kind={kind}
+                statement={q.statement_md}
+              />
             </div>
-          </div>
+          </Split>
         )
       )}
 
@@ -528,6 +519,36 @@ export default function ExamRoom({
   );
 }
 
+/** Two panes with a divider the student can drag (question | editor). */
+function Split({ children }: { children: [React.ReactNode, React.ReactNode] }) {
+  const [left, setLeft] = useState(40); // percent of the width for the question
+  const box = useRef<HTMLDivElement>(null);
+  const drag = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = box.current;
+    if (!el) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      const r = el.getBoundingClientRect();
+      setLeft(Math.min(65, Math.max(25, ((ev.clientX - r.left) / r.width) * 100)));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.classList.remove("dragging");
+    };
+    document.body.classList.add("dragging");
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  return (
+    <div className="split" ref={box} style={{ gridTemplateColumns: `${left}% 8px 1fr` }}>
+      {children[0]}
+      <div className="divider" onPointerDown={drag} title="Drag to resize" />
+      {children[1]}
+    </div>
+  );
+}
+
 /** Spot the classic mistake: input("Enter n:") prints its prompt into the output. */
 function promptHint(stdout?: string | null, expected?: string | null): boolean {
   if (!stdout || expected == null) return false;
@@ -536,63 +557,80 @@ function promptHint(stdout?: string | null, expected?: string | null): boolean {
   return out !== exp && exp.length > 0 && out.endsWith(exp);
 }
 
-function ResultPanel({ result }: { result: Result }) {
-  if (result.kind === "error") return <p className="error">{result.message}</p>;
-  const { out } = result;
-  const allPassed = out.total > 0 && out.passed === out.total;
+function ResultPanel({
+  result,
+  running,
+  kind,
+  statement,
+}: {
+  result: Result | undefined;
+  running: "run" | "submit" | undefined;
+  kind: Kind;
+  statement: string;
+}) {
+  // Hidden only until something new happens: a new run or a new result always shows.
+  const current: unknown = running ?? result ?? null;
+  const [hiddenFor, setHiddenFor] = useState<unknown>(undefined);
+  const open = hiddenFor !== current;
+  const setOpen = (o: boolean) => setHiddenFor(o ? undefined : current);
+
+  let title = "Results";
+  let pill: React.ReactNode = null;
+  let body: React.ReactNode;
+  if (running) {
+    body = <p className="muted">{running === "run" ? "Running your code on the samples…" : "Checking your code against all tests…"}</p>;
+  } else if (!result) {
+    body = <p className="muted">Press Run samples to test your code on the examples, or Submit to check it against all tests.</p>;
+  } else if (result.kind === "error") {
+    body = <p className="error">{result.message}</p>;
+  } else {
+    const { out } = result;
+    const allPassed = out.total > 0 && out.passed === out.total;
+    title = result.kind === "run" ? "Sample tests" : "Submission";
+    pill = (
+      <span className={`pill ${allPassed ? "ok" : "bad"}`}>
+        {out.passed}/{out.total} passed
+      </span>
+    );
+    body = (
+      <>
+        {out.hidden_summary && <p className="notice">{out.hidden_summary}</p>}
+        {out.compile_output && (
+          <>
+            <div className="muted">Compiler output</div>
+            <pre className="out bad">{out.compile_output}</pre>
+          </>
+        )}
+        {kind === "stdio" && out.tests.some((t) => t.verdict === "WA" && promptHint(t.stdout, t.expected_output)) && (
+          <p className="notice">
+            Tip: your output starts with extra text. If you wrote something like <code>input("Enter n:")</code>, the
+            prompt is printed too. Use <code>input()</code> with no text: the output must match exactly.
+          </p>
+        )}
+        {out.tests.map((t) => (
+          <details key={`${t.is_sample}-${t.ordinal}`} className="test" open={t.is_sample && (t.verdict !== "AC" || out.tests.length === 1)}>
+            <summary>
+              <span className={`pill ${t.verdict === "AC" ? "ok" : "bad"}`}>{VERDICTS[t.verdict] ?? t.verdict}</span>{" "}
+              {t.is_sample ? `${kind === "checks" ? "Checks" : "Example"} ${t.ordinal}` : `Hidden test ${t.ordinal}`}
+              {t.time_ms != null && <span className="muted"> · {t.time_ms} ms</span>}
+            </summary>
+            {t.message && <p className={kind === "ml" ? "score" : "muted"}>{t.message}</p>}
+            <TestResultView kind={kind} test={t} statement={statement} />
+          </details>
+        ))}
+      </>
+    );
+  }
+
   return (
-    <div className="card results">
-      <div className="row between">
-        <h2>{result.kind === "run" ? "Sample tests" : "Submission"}</h2>
-        <span className={`pill ${allPassed ? "ok" : "bad"}`}>
-          {out.passed}/{out.total} passed
+    <div className={`results ${open ? "open" : ""} ${result || running ? "filled" : ""}`}>
+      <button className="results-head" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span>
+          <strong>{title}</strong> {pill}
         </span>
-      </div>
-      {out.hidden_summary && <p>{out.hidden_summary}</p>}
-      {out.compile_output && (
-        <>
-          <div className="muted">Compiler output</div>
-          <pre className="out bad">{out.compile_output}</pre>
-        </>
-      )}
-      {out.tests.some((t) => t.verdict === "WA" && promptHint(t.stdout, t.expected_output)) && (
-        <p className="notice">
-          Tip: your output starts with extra text. If you wrote something like <code>input("Enter n:")</code>,
-          the prompt is printed too. Use <code>input()</code> with no text: the output must match exactly.
-        </p>
-      )}
-      {out.tests.map((t) => (
-        <details key={`${t.is_sample}-${t.ordinal}`} className="test" open={t.verdict !== "AC" && t.is_sample}>
-          <summary>
-            <span className={`pill ${t.verdict === "AC" ? "ok" : "bad"}`}>{VERDICTS[t.verdict] ?? t.verdict}</span>{" "}
-            {t.is_sample ? `Sample ${t.ordinal}` : `Hidden test ${t.ordinal}`}
-            {t.time_ms != null && <span className="muted"> · {t.time_ms} ms</span>}
-          </summary>
-          {t.message && <p className="muted">{t.message}</p>}
-          {t.input != null && (
-            <div className="sample">
-              <div>
-                <div className="muted">Input</div>
-                <TestData text={t.input} />
-              </div>
-              <div>
-                <div className="muted">Expected</div>
-                <pre>{t.expected_output}</pre>
-              </div>
-              <div>
-                <div className="muted">Your output</div>
-                <pre>{t.stdout}</pre>
-              </div>
-            </div>
-          )}
-          {t.stderr && (
-            <>
-              <div className="muted">Errors</div>
-              <pre className="out bad">{t.stderr}</pre>
-            </>
-          )}
-        </details>
-      ))}
+        <span className="muted">{open ? "Hide ▾" : "Show ▴"}</span>
+      </button>
+      {open && <div className="results-body">{body}</div>}
     </div>
   );
 }

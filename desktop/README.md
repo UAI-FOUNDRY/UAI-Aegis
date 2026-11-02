@@ -9,8 +9,18 @@ Specs: `docs/CLIENT_PROTOCOL.md` (the protocol), `backend/app/security/signing.p
 
 - Sign in (+ forced password change), laptop registration with an Ed25519 key kept in the
   OS keychain, exam list, start/resume with the access code.
-- Exam room: Markdown statements (raw HTML off + DOMPurify, links stripped), samples,
-  Monaco editor (bundled, no CDN) with the server's language list and starter code.
+- Exam room laid out like a coding site: question on the left, a large Monaco editor
+  (bundled, no CDN) on the right with Run / Submit and a results panel under it; the divider
+  can be dragged and the results panel hidden. Question tabs in the top bar. No language
+  picker when the question allows one language. Markdown: raw HTML off + DOMPurify, links stripped.
+- Each kind of question shows its samples and results its own way (`src/testdata.tsx`):
+  normal programs (input / expected / your output), function questions ("Arguments" /
+  "Returns"; your return value, and what your code printed), SQL (the INSERT data and the
+  expected / your result as small tables), ML (training and test data as scrollable read-only
+  tables, first 300 rows with a row count, expected labels as the last column; your score and
+  predictions), HTML and chart questions (the checklist, then a tick or cross per check).
+  The server does not send the question kind yet, so it is worked out from the language and
+  the samples; a `kind` or `grader` field on the question will be used as soon as it exists.
 - Autosave every 5 s with `base_revision`; an AES-256-GCM encrypted local copy is written
   before every save/run/submit, so a Wi-Fi drop or crash loses nothing (resent on resume).
 - Run samples / Submit with per-test results; Finish (saves everything first) with receipts.
@@ -21,6 +31,7 @@ Specs: `docs/CLIENT_PROTOCOL.md` (the protocol), `backend/app/security/signing.p
   outside the editor is refused; copy/paste inside the editor works).
 - All HTTP and signing in Rust; the web view can call only the commands in
   `src-tauri/build.rs` + `capabilities/default.json`. Strict CSP in `tauri.conf.json`.
+  The web view cannot navigate anywhere except the app's own pages (`src-tauri/src/navguard.rs`).
 
 - Lockdown while a session is on screen (`src-tauri/src/lockdown/`): full screen, always on
   top, cannot be closed or minimised, hidden from screen capture; leaving full screen is
@@ -54,8 +65,9 @@ specifics (keyboard blocking), blocked-app list from the server.
 desktop/
   src/
     App.tsx            sign in, password change, exam list
-    ExamRoom.tsx       questions, editor, autosave, run/submit/finish, heartbeat, lock screen
-    CodeEditor.tsx     Monaco + paste guard
+    ExamRoom.tsx       question | editor layout, autosave, run/submit/finish, heartbeat, lock screen
+    testdata.tsx       samples and results per question kind (tables, arguments, checklists)
+    CodeEditor.tsx     Monaco (+ its language workers) + paste guard
     markdown.ts        safe Markdown (markdown-it, html off, DOMPurify)
     api.ts             typed wrappers for the Rust commands
   src-tauri/
@@ -63,6 +75,7 @@ desktop/
     src/keystore.rs    device key + draft key in Windows Credential Manager / macOS Keychain / Secret Service
     src/drafts.rs      encrypted local copy of answers (tests: round trip, tamper, wrong session)
     src/client.rs      HTTP client: serialise once, sign, send the same bytes; error parsing
+    src/navguard.rs    blocks navigation away from the app's own pages
     src/commands.rs    the commands the UI may call + focus-loss reporting
     src/lockdown/      kiosk + detection loop (mod.rs), checks (detect.rs), Windows hook/RDP/BIOS (win32.rs), exam desktop (secure_desktop.rs)
     tests/live_backend.rs   full signed flow against a running backend
