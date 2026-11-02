@@ -11,6 +11,7 @@ type Screen =
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: "login" });
   const [user, setUser] = useState<User | null>(null);
+  const [quitOpen, setQuitOpen] = useState(false);
 
   const signedOut = useCallback(() => {
     setUser(null);
@@ -33,7 +34,7 @@ export default function App() {
           )}
           {/* On Windows the app runs on its own desktop with no taskbar: this is the way out. */}
           {screen.name !== "exam" && (
-            <button className="link" onClick={() => api.quitApp().catch(() => undefined)}>Quit</button>
+            <button className="link" onClick={() => setQuitOpen(true)}>Quit</button>
           )}
         </span>
       </header>
@@ -58,6 +59,50 @@ export default function App() {
           />
         )}
       </main>
+      {quitOpen && <QuitDialog onCancel={() => setQuitOpen(false)} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- quit confirmation
+
+const QUIT_DELAY_SECONDS = 5;
+
+/** Quitting leaves the exam desktop, so it is confirmed, and the red button only works
+ *  after a 5-second countdown (no accidental double-click straight through). */
+function QuitDialog({ onCancel }: { onCancel: () => void }) {
+  const [left, setLeft] = useState(QUIT_DELAY_SECONDS);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (left <= 0) return;
+    const id = window.setTimeout(() => setLeft((s) => s - 1), 1000);
+    return () => window.clearTimeout(id);
+  }, [left]);
+
+  const quit = async () => {
+    try {
+      await api.quitApp();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+
+  return (
+    <div className="modal-backdrop">
+      <div className="card narrow modal" role="dialog" aria-modal="true" aria-labelledby="quit-title">
+        <h1 id="quit-title">Quit UAI Aegis?</h1>
+        <p>The app will close and you will go back to your normal desktop.</p>
+        {error && <p className="error">{error}</p>}
+        <div className="row end">
+          <button className="secondary" onClick={onCancel} autoFocus>
+            Cancel
+          </button>
+          <button className="danger" disabled={left > 0} onClick={quit}>
+            {left > 0 ? `Quit (${left})` : "Quit"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
