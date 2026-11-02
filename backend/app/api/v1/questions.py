@@ -506,7 +506,9 @@ async def generate_outputs(question_id: uuid.UUID, only_missing: bool = Query(Fa
     question = await _question_for(db, user, question_id, Cap.edit)
     grader = get_grader(question.grader)
     if not grader.can_generate_expected:
-        raise bad_request("not_applicable", "This question type gets its expected answers from the uploaded data.")
+        raise bad_request("not_applicable",
+                          "This question type has no expected outputs to generate (ML uses uploaded data; "
+                          "HTML tests are checks). Use Validate instead.")
     if not question.reference_enc or not question.reference_language:
         raise bad_request("no_reference", "Add a reference solution first.")
     lang = await _language(db, question.reference_language)

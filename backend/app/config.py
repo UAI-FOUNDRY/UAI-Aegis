@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 from functools import cached_property
+from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,6 +56,9 @@ class Settings(BaseSettings):
     judge0_max_concurrency: int = 8
     judge0_poll_interval_seconds: float = 0.5
     judge0_timeout_seconds: float = 90.0
+    # local_dev only: the Python that runs 'python3-ml' answers (needs numpy, pandas, scikit-learn,
+    # matplotlib, seaborn). Empty = use ./.venv-ml if it exists, else the API's own Python.
+    local_ml_python: str = ""
 
     # Limits
     time_limit_factor: float = 3.0  # time limit = slowest reference run x factor
@@ -107,6 +111,16 @@ class Settings(BaseSettings):
     @property
     def email_domains(self) -> list[str]:
         return [d.strip().lower() for d in self.allowed_email_domains.split(",") if d.strip()]
+
+    @property
+    def ml_python_path(self) -> str | None:
+        """Interpreter for 'python3-ml' answers in local_dev (see local_ml_python)."""
+        if self.local_ml_python:
+            return self.local_ml_python
+        for candidate in (Path(".venv-ml") / "Scripts" / "python.exe", Path(".venv-ml") / "bin" / "python"):
+            if candidate.exists():
+                return str(candidate.resolve())
+        return None
 
     @property
     def cors_origin_list(self) -> list[str]:

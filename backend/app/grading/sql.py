@@ -90,6 +90,7 @@ def _rows(result: dict[str, Any], order_matters: bool) -> list[list[Any]]:
 class SqlGrader(Grader):
     key = "sql"
     description = "SQL on SQLite: a SELECT whose result is compared, or statements checked by a query."
+    needs_python = True
 
     def validate_config(self, config: dict[str, Any]) -> dict[str, Any]:
         out = _base_config(config, {"mode", "schema_sql", "check_query", "order_matters", "check_column_names"})

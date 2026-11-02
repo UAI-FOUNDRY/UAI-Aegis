@@ -66,7 +66,7 @@ async def test_bad_grader_config_and_unknown_language_rejected(api):
     r = await c.post(f"/api/v1/subjects/{sid}/questions", headers=h, json={**base, "starter_code": {"cobol": "x"}})
     assert r.status_code == 400 and r.json()["detail"]["code"] == "unknown_language"
     graders = (await c.get("/api/v1/graders", headers=h)).json()
-    assert [g["key"] for g in graders] == ["function", "ml", "sql", "stdio"]
+    assert [g["key"] for g in graders] == ["function", "html", "ml", "plot", "sql", "stdio"]
 
 
 async def test_local_executor_limits():

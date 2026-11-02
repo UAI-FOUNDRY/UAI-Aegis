@@ -183,3 +183,7 @@ cd backend && alembic upgrade head && python -m app.cli demo-data && uvicorn app
 `prof.demo@aegis.local` and `admin.demo@aegis.local`, password `Aegis-demo-2026!`.
 Four demo labs: Programming (Python-only exam), DBMS (SQL), ML, and DSA (a function
 question, "Two sum").
+
+## Documentation maintenance
+
+Portal setup and usage instructions are maintained by the project team.

@@ -7,6 +7,7 @@
   export-openapi          write the OpenAPI contract (default ../api/openapi.json)
   verify-audit            check the audit log hash chain
   check-judge0            compare language ids with GET /languages on the Judge0 server
+  bml-lab                 add a Basics of Machine Learning lab: one validated question per practical
   simulate                run a full simulated exam against a running server (--lab python|sql|ml|function|all)
 """
 
@@ -134,6 +135,12 @@ def _simulate(args: argparse.Namespace) -> None:
     sys.exit(run(args.url, args.lab))
 
 
+def _bml_lab(args: argparse.Namespace) -> None:
+    from .bml_lab import run
+
+    sys.exit(run(args.url))
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description="UAI Aegis tools")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -154,6 +161,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--url", default="http://localhost:8000")
     p.add_argument("--lab", default="all", choices=["python", "sql", "ml", "function", "all"])
     p.set_defaults(fn=_simulate)
+    p = sub.add_parser("bml-lab")
+    p.add_argument("--url", default="http://localhost:8000")
+    p.set_defaults(fn=_bml_lab)
     args = parser.parse_args(argv)
     args.fn(args)
 

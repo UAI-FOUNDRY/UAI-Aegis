@@ -30,6 +30,8 @@ class StdioGrader(Grader):
     def validate_language(self, language_key: str) -> None:
         if language_key == "sql":
             raise ValueError("SQL answers need a question with the 'sql' grader")
+        if language_key == "html":
+            raise ValueError("HTML answers need a question with the 'html' grader")
 
     def check(self, test: TestSpec, result: ExecResult, config: dict[str, Any]) -> Check:
         if outputs_match(result.stdout, test.expected or "", config["compare"], tolerance=config["tolerance"]):

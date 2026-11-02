@@ -310,6 +310,37 @@
         }
       }
     },
+    "/api/v1/admin/subject-summary": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Admin Subject Summary",
+        "description": "Return subject names and counts without exposing content.",
+        "operationId": "admin_subject_summary_api_v1_admin_subject_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AdminSubjectSummary"
+                  },
+                  "type": "array",
+                  "title": "Response Admin Subject Summary Api V1 Admin Subject Summary Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/departments": {
       "post": {
         "tags": [
@@ -4550,6 +4581,46 @@
   },
   "components": {
     "schemas": {
+      "AdminSubjectSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "archived": {
+            "type": "boolean",
+            "title": "Archived"
+          },
+          "question_count": {
+            "type": "integer",
+            "title": "Question Count"
+          },
+          "exam_count": {
+            "type": "integer",
+            "title": "Exam Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "code",
+          "name",
+          "archived",
+          "question_count",
+          "exam_count"
+        ],
+        "title": "AdminSubjectSummary",
+        "description": "Safe subject information for the admin dashboard."
+      },
       "AnswerOut": {
         "properties": {
           "question_id": {
