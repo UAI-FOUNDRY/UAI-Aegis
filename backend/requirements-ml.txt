@@ -1,0 +1,12 @@
+# Libraries for students' 'python3-ml' answers (ML / data-science labs), installed in a
+# SEPARATE virtualenv so the API's own environment stays small:
+#   python -m venv .venv-ml
+#   .venv-ml/bin/pip install -r requirements-ml.txt        (Windows: .venv-ml\Scripts\pip ...)
+# The local dev runner uses .venv-ml automatically (or set AEGIS_LOCAL_ML_PYTHON).
+# Production runs code on Judge0 instead: see judge/Dockerfile.ml.
+numpy
+pandas
+matplotlib
+seaborn
+scikit-learn
+scipy

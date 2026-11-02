@@ -40,7 +40,9 @@ CLASSIFICATION = {"accuracy", "f1_macro", "precision_macro", "recall_macro"}
 REGRESSION_HIGHER = {"r2"}
 REGRESSION_LOWER = {"rmse", "mae"}
 
-_HARNESS = '''import contextlib, json, sys
+_HARNESS = '''import contextlib, json, os, sys
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):  # sandbox thread limit
+    os.environ.setdefault(_v, "1")
 _payload = json.loads(sys.stdin.read())
 _source = {source!r}
 _ns = {{"__name__": "solution"}}

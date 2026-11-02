@@ -24,8 +24,11 @@ from ...models import (
     BatchMember,
     ClientRelease,
     Department,
+    Exam,
     Language,
+    Question,
     Role,
+    Subject,
     User,
     utcnow,
 )
@@ -40,6 +43,64 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 MAX_IMPORT_BYTES = 2 * 1024 * 1024
 MAX_IMPORT_ROWS = 5000
+
+class AdminSubjectSummary(BaseModel):
+    """Safe subject information for the admin dashboard."""
+
+    id: uuid.UUID
+    code: str
+    name: str
+    archived: bool
+    question_count: int
+    exam_count: int
+
+
+@router.get(
+    "/subject-summary",
+    response_model=list[AdminSubjectSummary],
+)
+async def admin_subject_summary(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Return subject names and counts without exposing content."""
+
+    subjects = (
+        await db.scalars(
+            select(Subject).order_by(Subject.code)
+        )
+    ).all()
+
+    summaries = []
+
+    for subject in subjects:
+        question_count = await db.scalar(
+            select(func.count())
+            .select_from(Question)
+            .where(
+                Question.subject_id == subject.id,
+                Question.archived.is_(False),
+            )
+        )
+
+        exam_count = await db.scalar(
+            select(func.count())
+            .select_from(Exam)
+            .where(Exam.subject_id == subject.id)
+        )
+
+        summaries.append(
+            AdminSubjectSummary(
+                id=subject.id,
+                code=subject.code,
+                name=subject.name,
+                archived=subject.archived,
+                question_count=question_count or 0,
+                exam_count=exam_count or 0,
+            )
+        )
+
+    return summaries
 
 
 async def _record(db, state: AppState, admin: User, action: str, target_type: str, target_id, details=None):

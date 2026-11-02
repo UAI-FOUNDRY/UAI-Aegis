@@ -41,7 +41,6 @@ from ...security.crypto import AAD
 from ...security.tokens import new_access_code
 from ...services import audit
 from ...services.authz import Cap, caps_for, require_cap
-from ...services.live import notify
 from ...services.exams import (
     Marking,
     Selection,
@@ -52,6 +51,7 @@ from ...services.exams import (
     languages_for_question,
     load_tests,
 )
+from ...services.live import notify
 from ...services.proctoring import ExamPolicy, effective_policy, lock
 from ...state import AppState
 from ..deps import get_db, get_state, require_professor
