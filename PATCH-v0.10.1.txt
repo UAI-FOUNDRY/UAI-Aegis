@@ -1,0 +1,21 @@
+UAI Aegis patch v0.10.1 (against GitHub main 8e1c172, "Merge pull request #5")
+===========================================================================
+Contains v0.9.1 + v0.10 merged with Aryaman's PR #4/#5 (question|editor layout,
+testdata.tsx, navguard.rs, quit dialog). Only changed/added files are included.
+
+Apply: unzip over the repo root (C:\Projects\UAI aegis\uai-aegis), replace when asked.
+  git pull first, so you are on 8e1c172.
+
+Merged by hand:
+- desktop/src-tauri/src/lib.rs: Aryaman's navguard plugin + the macOS menu/run-event code.
+- desktop/src/ExamRoom.tsx: Aryaman's version kept (it already hides the language picker
+  for one-language exams, which is what v0.9.1 changed) - so it is NOT in this zip.
+
+Checked on the merged tree: desktop npm run build, cargo test --lib (16 passed, incl.
+navguard, macOS key rules, Linux session), cargo check --release. Backend code is the same
+as v0.10 (85 tests passing). Windows/macOS compile runs in GitHub CI (desktop.yml).
+
+Then:
+  cd backend; pip install -r requirements.txt -r requirements-dev.txt; pytest -q
+  cd ..\desktop; npm install; npm run build
+  git add -A; git commit -m "v0.10.1: backend fixes, Mac/Linux lockdown, CI (merged with desktop PR #5)"

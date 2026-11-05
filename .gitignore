@@ -27,3 +27,6 @@ target/
 .DS_Store
 .idea/
 .vscode/
+
+# Local Redis snapshot
+dump.rdb

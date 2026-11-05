@@ -6,8 +6,9 @@ server; professors run everything from a web portal.
 
 This repository holds the whole project: the **backend** (built and tested), the
 **professor portal** (guide steps 0–12 built and browser-tested) and the **student
-desktop app** (in progress). See [What's new for the team](#whats-new-for-the-team) for
-what each developer needs to know about the latest changes.
+desktop app** (works on Windows: desktop/README.md). See
+[What's new for the team](#whats-new-for-the-team) for what each developer needs to know
+about the latest changes.
 
 ```
 uai-aegis/
