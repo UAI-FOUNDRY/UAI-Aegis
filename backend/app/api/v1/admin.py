@@ -32,7 +32,7 @@ from ...models import (
     User,
     utcnow,
 )
-from ...security.passwords import hash_password, password_problem
+from ...security.passwords import hash_password_async, password_problem
 from ...services import audit
 from ...state import AppState
 from ..deps import get_db, get_state, require_admin
@@ -235,7 +235,7 @@ async def create_user(body: UserCreate, state: AppState = Depends(get_state),
         problem = password_problem(body.temporary_password, email=body.email)
         if problem:
             raise bad_request("weak_password", problem)
-        user.password_hash = hash_password(body.temporary_password)
+        user.password_hash = await hash_password_async(state.password_slots, body.temporary_password)
         user.must_change_password = True
     db.add(user)
     await _record(db, state, admin, "user.created", "user", user.id,
@@ -276,7 +276,7 @@ async def set_temporary_password(user_id: uuid.UUID, body: TemporaryPasswordIn, 
     problem = password_problem(body.password, email=user.email)
     if problem:
         raise bad_request("weak_password", problem)
-    user.password_hash = hash_password(body.password)
+    user.password_hash = await hash_password_async(state.password_slots, body.password)
     user.must_change_password = True
     await _revoke_sessions(db, user.id)
     await _record(db, state, admin, "user.temporary_password_set", "user", user.id)

@@ -1,6 +1,12 @@
 """Plot questions (matplotlib / seaborn): the student's code draws a chart; each test is a
 list of checks on the figure it drew.
 
+The checks never enter the sandbox. The sandbox runs the student's code and reports what
+the figure contains (chart kinds, titles, labels, counts); the server then judges that
+report against the test's checks. The student's code runs in the same process as the
+report, so it must never be the place where verdicts are decided: code that rewrote the
+judge or printed "all checks passed" would otherwise get full marks without drawing.
+
 Answers are written in 'python3-ml' (the runtime with matplotlib and seaborn). The code runs
 off-screen (Agg backend) in the sandbox; plt.show() does nothing. If the question has data,
 it is written to a file (default data.csv) before the code runs, so students can do
@@ -26,17 +32,22 @@ grader_config:
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
-from .checklist import checklist_text, checklist_verdict
+from .checklist import results_text, verdict_from_results
 from .executor import ExecRequest, ExecResult
-from .registry import Check, Grader, RunTarget, TestSpec, _base_config, register
+from .registry import Check, Grader, RunTarget, TestSpec, Verdict, _base_config, register
 
 MAX_DATA_BYTES = 2 * 1024 * 1024
+SUMMARY_MARK = "AEGIS_PLOT:"
+_COUNTS = ("bars", "lines", "points", "wedges")
+_MAX_AXES = 200
+_MAX_TEXT = 500
 
-# Parsing and judging checks: plain Python, used in the sandbox and on the server (to check
-# tests as they are saved). The figure itself is summarised by _SANDBOX below.
+# Parsing and judging checks: plain Python, run only on the server. The figure itself is
+# summarised in the sandbox by _SANDBOX below.
 _CHECKS = r'''
 import json
 import re
@@ -158,7 +169,9 @@ def judge_all(summary, checks_text):
 _SANDBOX = r'''
 import contextlib
 import functools
+import json
 import os
+import sys
 import warnings
 
 os.environ["MPLBACKEND"] = "Agg"
@@ -261,15 +274,9 @@ def summarise():
     return {"figures": len(figures), "suptitles": suptitles, "axes": axes, "figure_legend": figure_legend}
 
 
-_checks_text = sys.stdin.read()
-try:
-    parse_checks(_checks_text)
-except ValueError as exc:
-    print("Bad checks: " + str(exc), file=sys.stderr)
-    sys.exit(3)
 with contextlib.redirect_stdout(sys.stderr):  # the student's prints go to the log, not the result
     exec(compile(SOURCE, "solution.py", "exec"), {"__name__": "__main__"})
-print(json.dumps({"results": judge_all(summarise(), _checks_text)}))
+print(MARK + json.dumps(summarise()))
 '''
 
 _NS: dict[str, Any] = {}
@@ -279,9 +286,58 @@ judge_all = _NS["judge_all"]
 
 
 def harness(source: str, config: dict[str, Any]) -> str:
-    """The Python program run in the sandbox for one answer."""
-    return (_CHECKS + "\nSOURCE = " + repr(source) + "\nDATA = " + repr(config.get("data_csv"))
-            + "\nDATA_FILE = " + repr(config["data_file"]) + "\n" + _SANDBOX)
+    """The Python program run in the sandbox for one answer (no checks in it)."""
+    return ("SOURCE = " + repr(source) + "\nDATA = " + repr(config.get("data_csv"))
+            + "\nDATA_FILE = " + repr(config["data_file"]) + "\nMARK = " + repr(SUMMARY_MARK) + "\n" + _SANDBOX)
+
+
+def _text(value: Any) -> str:
+    return value[:_MAX_TEXT] if isinstance(value, str) else ""
+
+
+def _count(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 10**7 else 0
+
+
+def read_summary(stdout: str) -> dict[str, Any]:
+    """The figure report printed by the sandbox, rebuilt with only the fields and types the
+    judge uses (the student's code could print anything)."""
+    lines = [line for line in stdout.splitlines() if line.startswith(SUMMARY_MARK)]
+    if not lines:
+        raise ValueError("no figure report")
+    raw = json.loads(lines[-1][len(SUMMARY_MARK):])
+    if not isinstance(raw, dict) or not isinstance(raw.get("axes"), list):
+        raise ValueError("malformed figure report")
+    axes = []
+    for ax in raw["axes"][:_MAX_AXES]:
+        if not isinstance(ax, dict):
+            raise ValueError("malformed figure report")
+        kinds = ax.get("kinds") if isinstance(ax.get("kinds"), list) else []
+        ticks = ax.get("xticks") if isinstance(ax.get("xticks"), list) else []
+        axes.append({
+            "title": _text(ax.get("title")), "xlabel": _text(ax.get("xlabel")), "ylabel": _text(ax.get("ylabel")),
+            "legend": ax.get("legend") is True,
+            "kinds": [k for k in kinds if isinstance(k, str)][:20],
+            "xticks": [_text(t) for t in ticks[:500] if isinstance(t, str)],
+            **{name: _count(ax.get(name)) for name in _COUNTS},
+        })
+    suptitles = raw.get("suptitles") if isinstance(raw.get("suptitles"), list) else []
+    return {"figures": _count(raw.get("figures")), "suptitles": [_text(t) for t in suptitles[:_MAX_AXES]],
+            "figure_legend": raw.get("figure_legend") is True, "axes": axes}
+
+
+def describe(summary: dict[str, Any]) -> str:
+    """A short, readable account of what was drawn (shown instead of the raw report)."""
+    if not summary["axes"]:
+        return "No chart was drawn."
+    parts = []
+    for i, ax in enumerate(summary["axes"], start=1):
+        bits = [", ".join(ax["kinds"]) or "empty axes"]
+        for name in ("title", "xlabel", "ylabel"):
+            if ax[name]:
+                bits.append(f"{name} '{ax[name][:60]}'")
+        parts.append(f"Chart {i}: " + "; ".join(bits))
+    return "\n".join(parts)
 
 
 class PlotGrader(Grader):
@@ -309,17 +365,30 @@ class PlotGrader(Grader):
         parse_checks(text)
 
     def prepare(self, target: RunTarget, test: TestSpec, config: dict[str, Any]) -> ExecRequest:
+        parse_checks(test.input)  # a malformed test is our error, not the student's
         return ExecRequest(
             language_key=target.language_key, judge0_id=target.judge0_id, file_name=target.file_name,
-            source=harness(target.source, config), stdin=test.input, time_limit_ms=target.time_limit_ms,
-            memory_limit_kb=target.memory_limit_kb,
+            source=harness(target.source, config), stdin="",  # the checks stay on the server
+            time_limit_ms=target.time_limit_ms, memory_limit_kb=target.memory_limit_kb,
         )
 
-    def shown_stdout(self, result: ExecResult) -> str:
-        return checklist_text(result.stdout)
+    def _judge(self, test: TestSpec, result: ExecResult) -> list[dict[str, Any]] | None:
+        try:
+            return judge_all(read_summary(result.stdout), test.input)
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            return None
+
+    def shown_output(self, test: TestSpec, result: ExecResult, config: dict[str, Any]) -> str:
+        results = self._judge(test, result)
+        if results is None:
+            return ""
+        return results_text(results) + "\n\n" + describe(read_summary(result.stdout))
 
     def check(self, test: TestSpec, result: ExecResult, config: dict[str, Any]) -> Check:
-        return checklist_verdict(test, result.stdout, config["partial_credit"], what="the chart")
+        results = self._judge(test, result)
+        if results is None:
+            return Check(Verdict.wrong_answer, 0.0, "the chart could not be checked")
+        return verdict_from_results(test, results, config["partial_credit"])
 
 
 register(PlotGrader())

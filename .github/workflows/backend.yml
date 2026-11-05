@@ -31,7 +31,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements-dev.txt
       - name: Lint
-        run: ruff check --select F,E9,B,UP,SIM,I --ignore B008,UP017,SIM108,B904,UP040,SIM102 app tests alembic
+        run: ruff check app tests alembic   # rules in pyproject.toml
       - name: Tests (SQLite)
         run: pytest -q
       - name: Tests (PostgreSQL + Redis)
@@ -39,6 +39,10 @@ jobs:
           AEGIS_TEST_DATABASE_URL: postgresql+asyncpg://aegis:aegis-ci@localhost:5432/aegis_test
           AEGIS_TEST_REDIS_URL: redis://localhost:6379/0
         run: pytest -q
+      - name: No known vulnerabilities in dependencies
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements-dev.txt
       - name: OpenAPI contract is up to date
         run: |
           python -m app.cli export-openapi --out /tmp/openapi.json

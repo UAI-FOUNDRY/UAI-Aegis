@@ -1,6 +1,6 @@
 [project]
 name = "uai-aegis-backend"
-version = "0.7.0"
+version = "0.9.1"
 description = "UAI Aegis: proctored practical exams for Universal AI University"
 requires-python = ">=3.12,<3.14"
 
@@ -8,13 +8,13 @@ requires-python = ">=3.12,<3.14"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-filterwarnings = [
-    "error::pytest.PytestUnraisableExceptionWarning",
-    # uvicorn 0.34 still uses the websockets "legacy" server API; harmless
-    "ignore::DeprecationWarning:websockets.*",
-    "ignore::DeprecationWarning:uvicorn.*",
-]
+filterwarnings = ["error::pytest.PytestUnraisableExceptionWarning"]
 
 [tool.ruff]
 line-length = 120
 target-version = "py312"
+
+[tool.ruff.lint]
+# Same rules as CI, so `ruff check .` locally catches what CI would.
+select = ["F", "E9", "B", "UP", "SIM", "I"]
+ignore = ["B008", "UP017", "SIM108", "B904", "UP040", "SIM102"]

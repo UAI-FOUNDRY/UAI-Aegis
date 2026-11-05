@@ -1,0 +1,32 @@
+name: portal
+
+on:
+  pull_request:
+    paths: ["portal/**", "shared/**", "api/openapi.json", ".github/workflows/portal.yml"]
+  push:
+    branches: [main]
+    paths: ["portal/**", "shared/**", "api/openapi.json", ".github/workflows/portal.yml"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - run: npm ci
+      - name: No known vulnerabilities in shipped JavaScript
+        run: npm audit --omit=dev --audit-level=moderate
+      - name: Typed API client matches api/openapi.json
+        run: |
+          npm run gen:api
+          git diff --exit-code ../shared/api/schema.d.ts || (echo "Run: npm run gen:api" && exit 1)
+      - name: Type check and build
+        run: npm run build
+      # Add `npm run lint` here once its 4 current errors are fixed.

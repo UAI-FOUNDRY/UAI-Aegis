@@ -140,3 +140,46 @@ async def test_security_headers(api):
     assert r.headers["x-content-type-options"] == "nosniff"
     assert "default-src 'none'" in r.headers["content-security-policy"]
     assert PASSWORD not in r.text
+
+
+async def test_oversized_bodies_are_refused_even_without_content_length(api):
+    limit = api.state.settings.max_body_bytes
+
+    async def chunks():  # chunked upload: no Content-Length header to check up front
+        for _ in range(limit // 65536 + 2):
+            yield b" " * 65536
+
+    r = await api.client.post("/api/v1/auth/login", content=chunks(), headers={"Content-Type": "application/json"})
+    assert r.status_code == 413 and r.json()["detail"]["code"] == "body_too_large"
+    r = await api.client.post("/api/v1/auth/login", content=b" " * (limit + 1),
+                              headers={"Content-Type": "application/json"})
+    assert r.status_code == 413
+
+
+async def test_password_checks_do_not_block_other_requests(api, monkeypatch):
+    """Argon2 is CPU-heavy. It must run in worker threads, never on the event loop, so
+    while a whole lab signs in at once, everyone else's requests are still answered."""
+    import threading
+
+    from app.security import passwords
+
+    loop_thread = threading.get_ident()
+    seen: list[int] = []
+    real_verify, real_hash = passwords.verify_password, passwords.hash_password
+
+    def verify(stored, password):
+        seen.append(threading.get_ident())
+        return real_verify(stored, password)
+
+    def hashed(password):
+        seen.append(threading.get_ident())
+        return real_hash(password)
+
+    monkeypatch.setattr(passwords, "verify_password", verify)
+    monkeypatch.setattr(passwords, "hash_password", hashed)
+    user, headers = await api.staff(Role.professor)
+    await api.client.post("/api/v1/auth/login", json={"email": "nobody@uai.test", "password": "wrong-password"})
+    r = await api.client.post("/api/v1/auth/change-password", headers=headers,
+                              json={"current_password": PASSWORD, "new_password": "Another-good-pass-12"})
+    assert r.status_code == 200
+    assert len(seen) >= 4 and loop_thread not in seen

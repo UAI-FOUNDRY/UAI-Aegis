@@ -128,8 +128,12 @@ def time_limit_for(question: Question, language: Language, settings: Settings) -
     return max(settings.min_time_limit_ms, min(int(base * language.time_multiplier), settings.max_time_limit_ms))
 
 
-def memory_for(question: Question, settings: Settings) -> int:
-    return question.memory_limit_kb or settings.default_memory_limit_kb
+def memory_for(question: Question, settings: Settings, language: Language | None = None) -> int:
+    if question.memory_limit_kb:
+        return question.memory_limit_kb
+    if language is not None and language.key == "python3-ml":
+        return settings.ml_memory_limit_kb
+    return settings.default_memory_limit_kb
 
 
 async def languages_for_question(db: AsyncSession, question: Question, exam: Exam | None = None) -> list[Language]:
@@ -196,7 +200,7 @@ async def build_target(
         file_name=language.file_name,
         source=code,
         time_limit_ms=time_limit_ms or time_limit_for(question, language, state.settings),
-        memory_limit_kb=memory_for(question, state.settings),
+        memory_limit_kb=memory_for(question, state.settings, language),
         python=python,
     )
 

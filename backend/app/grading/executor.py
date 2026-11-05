@@ -27,6 +27,11 @@ from pathlib import Path
 
 import httpx
 
+try:  # POSIX only; imported here, not in the child, so nothing is imported between fork and exec
+    import resource
+except ImportError:  # Windows
+    resource = None  # type: ignore[assignment]
+
 OUTPUT_CAP_BYTES = 1024 * 1024  # stop collecting output past 1 MiB
 
 
@@ -200,12 +205,12 @@ class Judge0Executor(Executor):
 
 
 def _limits(memory_kb: int, cpu_seconds: int):  # pragma: no cover - runs in the child
-    def apply() -> None:
-        import resource
+    memory, cpu = memory_kb * 1024, cpu_seconds
 
-        resource.setrlimit(resource.RLIMIT_AS, (memory_kb * 1024, memory_kb * 1024))
-        resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
-        os.setsid()
+    def apply() -> None:
+        # Keep this to plain C calls: it runs between fork and exec while other threads exist.
+        resource.setrlimit(resource.RLIMIT_AS, (memory, memory))
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
 
     return apply
 
@@ -223,12 +228,22 @@ def _child_env(workdir: str | None = None) -> dict[str, str]:
     return env
 
 
+def _kill_tree(proc: subprocess.Popen) -> None:
+    if os.name == "posix":
+        with contextlib.suppress(OSError):
+            os.killpg(proc.pid, 9)  # the whole process group (start_new_session=True)
+    else:
+        with contextlib.suppress(OSError):
+            proc.kill()
+
+
 def _run_capped(args: list[str], stdin: bytes, cwd: str, timeout_s: float, preexec) -> tuple[int | None, bytes, bytes, bool, bool, float]:
     """Run a program with plain threads (works on every OS and every asyncio event loop,
     including the one uvicorn uses with --reload on Windows). Returns
     (exit code, stdout, stderr, timed_out, output_capped, seconds)."""
     proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            cwd=cwd, env=_child_env(cwd), preexec_fn=preexec)
+                            cwd=cwd, env=_child_env(cwd), preexec_fn=preexec,
+                            start_new_session=os.name == "posix")  # own process group, killed as a whole
     capped = threading.Event()
     buffers: dict[str, bytearray] = {"out": bytearray(), "err": bytearray()}
 
@@ -240,7 +255,7 @@ def _run_capped(args: list[str], stdin: bytes, cwd: str, timeout_s: float, preex
             if len(buffers[key]) + len(chunk) > OUTPUT_CAP_BYTES:
                 capped.set()
                 with contextlib.suppress(OSError):
-                    proc.kill()
+                    _kill_tree(proc)
                 return
             buffers[key].extend(chunk)
 
@@ -262,11 +277,15 @@ def _run_capped(args: list[str], stdin: bytes, cwd: str, timeout_s: float, preex
         proc.wait(timeout=timeout_s)
     except subprocess.TimeoutExpired:
         timed_out = True
-        proc.kill()
+        _kill_tree(proc)
         proc.wait()
     elapsed = time.perf_counter() - started
+    _kill_tree(proc)  # anything the program started in the background
     for t in threads:
         t.join(timeout=2)
+    for stream in (proc.stdin, proc.stdout, proc.stderr):
+        with contextlib.suppress(OSError, ValueError):
+            stream.close()
     return proc.returncode, bytes(buffers["out"]), bytes(buffers["err"]), timed_out, capped.is_set(), elapsed
 
 
@@ -300,7 +319,7 @@ class LocalDevExecutor(Executor):
                 path = Path(workdir) / (req.file_name or "main.py")
                 path.write_text(req.source, encoding="utf-8")
                 limit_s = req.time_limit_ms / 1000
-                preexec = _limits(req.memory_limit_kb, math.ceil(limit_s) + 1) if os.name == "posix" else None
+                preexec = _limits(req.memory_limit_kb, math.ceil(limit_s) + 1) if resource is not None else None
                 try:
                     code, out, err, timed_out, capped, elapsed = await asyncio.to_thread(
                         _run_capped, [self._interpreter(req.language_key), "-I", str(path)],

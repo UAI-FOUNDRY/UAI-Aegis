@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...errors import bad_request, too_many, unauthorized
 from ...models import AuthSession, ClientKind, User, utcnow
-from ...security.passwords import hash_password, needs_rehash, password_problem, verify_password
+from ...security.passwords import hash_password_async, needs_rehash, password_problem, verify_password_async
 from ...security.tokens import new_token
 from ...services import audit
 from ...state import AppState
@@ -65,13 +65,13 @@ async def login(
 
     user = await db.scalar(select(User).where(User.email == body.email))
     # verify_password runs even for unknown emails, so timing does not reveal which exist.
-    valid = verify_password(user.password_hash if user else None, body.password)
+    valid = await verify_password_async(state.password_slots, user.password_hash if user else None, body.password)
     if not valid or user is None or not user.is_active:
         await state.limiter.hit(ip_key, settings.login_attempts_per_ip, 900)
         await state.limiter.hit(email_key, settings.login_attempts_per_email, 900)
         raise unauthorized("Wrong email or password.", code="invalid_credentials")
     if needs_rehash(user.password_hash):
-        user.password_hash = hash_password(body.password)
+        user.password_hash = await hash_password_async(state.password_slots, body.password)
 
     raw, digest = new_token()
     hours = settings.session_ttl_desktop_hours if body.client == ClientKind.desktop else settings.session_ttl_portal_hours
@@ -110,12 +110,13 @@ async def change_password(
     user: User = Depends(current_user),
 ) -> Message:
     user = await db.get(User, user.id)
-    if user.password_hash and not verify_password(user.password_hash, body.current_password or ""):
+    if user.password_hash and not await verify_password_async(state.password_slots, user.password_hash,
+                                                              body.current_password or ""):
         raise bad_request("wrong_password", "Your current password is wrong.")
     problem = password_problem(body.new_password, email=user.email)
     if problem:
         raise bad_request("weak_password", problem)
-    user.password_hash = hash_password(body.new_password)
+    user.password_hash = await hash_password_async(state.password_slots, body.new_password)
     user.must_change_password = False
     # Sign out every other session: if someone else knew the old password, they are out.
     current: AuthSession = request.state.auth_session

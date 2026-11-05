@@ -7,12 +7,18 @@ With college SSO, students never give Aegis a password at all.
 
 from __future__ import annotations
 
+import asyncio
+import os
+
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
-# argon2-cffi defaults follow RFC 9106's recommended profile: Argon2id, 64 MiB memory,
-# 3 iterations, 4 lanes, 16-byte random salt per hash.
-_hasher = PasswordHasher()
+# Argon2id with OWASP's recommended parameters (19 MiB, 2 iterations, 1 lane, 16-byte
+# random salt). A whole lab signs in at the start of an exam, so the server must check
+# ~100 passwords within seconds on modest hardware; argon2-cffi's default profile (64 MiB,
+# 3 iterations, 4 threads per hash) costs about 5x more CPU. Stored hashes with other
+# parameters keep working and are upgraded at the next sign-in (needs_rehash).
+_hasher = PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1)
 # Hash compared against when the account does not exist, so a wrong email and a
 # wrong password take the same time (no account enumeration by timing).
 _DUMMY_HASH = _hasher.hash("aegis-timing-equaliser")
@@ -32,6 +38,22 @@ def verify_password(stored_hash: str | None, password: str) -> bool:
         return _hasher.verify(stored_hash, password)
     except (VerifyMismatchError, VerificationError, InvalidHashError):
         return False
+
+
+# Each hash takes tens of milliseconds of CPU and 19 MiB. Run them in worker threads
+# (argon2 releases the GIL) so the server keeps answering other requests, at most one
+# per CPU core but one, so a lab signing in together cannot starve everything else.
+DEFAULT_CONCURRENCY = max(1, min(8, (os.cpu_count() or 2) - 1))
+
+
+async def verify_password_async(slots: asyncio.Semaphore, stored_hash: str | None, password: str) -> bool:
+    async with slots:
+        return await asyncio.to_thread(verify_password, stored_hash, password)
+
+
+async def hash_password_async(slots: asyncio.Semaphore, password: str) -> str:
+    async with slots:
+        return await asyncio.to_thread(hash_password, password)
 
 
 def needs_rehash(stored_hash: str) -> bool:

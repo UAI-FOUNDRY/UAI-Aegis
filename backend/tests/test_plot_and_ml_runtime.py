@@ -124,3 +124,33 @@ async def test_plot_question_end_to_end(api):
     crash = await attempt("import pandas as pd\npd.read_csv('missing.csv')\n")
     assert crash["tests"][0]["verdict"] == "RE"
     assert {t["verdict"] for t in (await attempt("print(1)", language="python3"))["tests"]} == {"IE"}
+
+
+@needs_ml
+async def test_plot_answers_cannot_mark_themselves(api):
+    """The student's code runs in the same process as the figure report. Checks are judged on
+    the server, so replacing the judge or printing a fake "all passed" earns nothing."""
+    h, sid = await _subject(api)
+    c = api.client
+    r = await c.post(f"/api/v1/subjects/{sid}/questions", headers=h, json={
+        "title": "Bar", "statement_md": "x", "difficulty": "easy", "grader": "plot", "time_limit_ms": 8000,
+        "reference_language": "python3-ml",
+        "reference_code": "import matplotlib.pyplot as plt\nplt.bar(['a', 'b'], [1, 2])\nplt.title('Sales')\n"})
+    qid = r.json()["id"]
+    await c.post(f"/api/v1/questions/{qid}/tests", headers=h, json={"tests": [
+        {"input": "chart bar\ntitle contains sales\ncount bars = 2"}]})
+    assert (await c.post(f"/api/v1/questions/{qid}/validate", headers=h)).json()["fraction"] == 1.0
+    for cheat in (
+        # 1. rewrite the judge that used to run in the sandbox
+        "import sys\nm = sys.modules['__main__']\n"
+        "m.judge_all = lambda s, t: [dict(check=l, ok=True, detail='') for l in t.splitlines() if l.strip()]\n",
+        # 2. print a fake result and stop before the real report
+        "import sys, os, json\nsys.__stdout__.write(json.dumps({'results': [{'check': 'x', 'ok': True}]}) + '\\n')\n"
+        "sys.__stdout__.flush()\nos._exit(0)\n",
+        # 3. read the checks to fake a matching report: the checks are not in the sandbox
+        "import sys, os\nchecks = sys.stdin.read()\nassert checks == '', checks\n"
+        "sys.__stdout__.write('AEGIS_PLOT:{\"axes\": []}\\n'); sys.__stdout__.flush(); os._exit(0)\n",
+    ):
+        out = (await c.post(f"/api/v1/questions/{qid}/try", headers=h,
+                            json={"language": "python3-ml", "code": cheat})).json()
+        assert out["fraction"] == 0.0, out

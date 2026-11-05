@@ -151,3 +151,26 @@ def test_local_executor_works_on_any_event_loop():
             ignored, summed = runner.run(scenario())
         assert (ignored.status, ignored.stdout) == (ExecStatus.ok, "0\n"), factory
         assert (summed.status, summed.stdout) == (ExecStatus.ok, "5\n"), factory
+
+
+def test_local_runner_kills_background_processes():
+    """A program that starts another process and then hangs: both are killed."""
+    import asyncio
+    import os
+    import subprocess
+    import time
+
+    import pytest
+
+    if os.name != "posix":
+        pytest.skip("process groups are POSIX only")
+    marker = f"aegis-orphan-{os.getpid()}"
+    code = ("import subprocess, sys\n"
+            f"subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)', '{marker}'])\n"
+            "while True: pass\n")
+    req = ExecRequest("python3", 71, "main.py", code, "", 1000, 262144)
+    (res,) = asyncio.run(LocalDevExecutor().run_batch([req]))
+    assert res.status is ExecStatus.time_limit
+    time.sleep(0.3)
+    left = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.split()
+    assert left == []

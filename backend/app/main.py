@@ -31,18 +31,66 @@ from .state import AppState
 log = logging.getLogger("aegis")
 
 
+_TOO_LARGE = {"detail": {"code": "body_too_large", "message": "Request is too large."}}
+
+
+class BodyTooLarge(Exception):
+    pass
+
+
+class BodyLimit:
+    """Refuse request bodies over the limit, including ones sent without a
+    Content-Length header (chunked), which would otherwise be read into memory whole."""
+
+    def __init__(self, app, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        for name, value in scope.get("headers", []):
+            if name == b"content-length":
+                if not value.isdigit() or int(value) > self.max_bytes:
+                    return await JSONResponse(_TOO_LARGE, status_code=413)(scope, receive, send)
+        received = 0
+        too_large = False
+        replaced = False
+
+        async def limited_receive():
+            nonlocal received, too_large
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    too_large = True
+                    raise BodyTooLarge()  # stops reading; the app answers with an error
+            return message
+
+        async def guarded_send(message):
+            nonlocal replaced
+            if too_large:  # whatever error the app produced, the answer is a plain 413
+                if not replaced:
+                    replaced = True
+                    await JSONResponse(_TOO_LARGE, status_code=413)(scope, receive, send)
+                return
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, guarded_send)
+        except BodyTooLarge:
+            if not replaced:
+                await JSONResponse(_TOO_LARGE, status_code=413)(scope, receive, send)
+
+
 class SecurityHeaders(BaseHTTPMiddleware):
-    """Hardening headers on every response, a request id for tracing, and a body size cap."""
+    """Hardening headers on every response and a request id for tracing."""
 
     def __init__(self, app, settings: Settings) -> None:
         super().__init__(app)
         self.settings = settings
 
     async def dispatch(self, request: Request, call_next):
-        length = request.headers.get("content-length")
-        if length and length.isdigit() and int(length) > self.settings.max_body_bytes:
-            return JSONResponse({"detail": {"code": "body_too_large", "message": "Request is too large."}},
-                                status_code=413)
         request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
         request.state.request_id = request_id[:64]
         response = await call_next(request)
@@ -130,6 +178,7 @@ def create_app(settings: Settings | None = None, *, state: AppState | None = Non
     app.state.aegis = state
 
     app.add_middleware(SecurityHeaders, settings=settings)
+    app.add_middleware(BodyLimit, max_bytes=settings.max_body_bytes)  # outermost: runs first
     if settings.cors_origin_list:
         app.add_middleware(
             CORSMiddleware,
@@ -157,6 +206,8 @@ def create_app(settings: Settings | None = None, *, state: AppState | None = Non
 
     @app.exception_handler(Exception)
     async def _unexpected(request: Request, exc: Exception):
+        if isinstance(exc, BodyTooLarge):  # BodyLimit turns this into a 413
+            return JSONResponse(_TOO_LARGE, status_code=413)
         log.exception("unhandled error (request %s)", getattr(request.state, "request_id", "-"))
         detail = {"code": "server_error", "message": "Something went wrong."}
         if not settings.is_production:  # show the cause while developing; never in production

@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     min_time_limit_ms: int = 1000
     max_time_limit_ms: int = 10000
     default_memory_limit_kb: int = 262144
+    # 'python3-ml' answers (numpy, pandas, scikit-learn, matplotlib) reserve far more address space
+    # than they use, and the sandbox limits address space: 256 MB fails at `import sklearn`.
+    # Default for ML questions without their own limit; keep it <= Judge0's MAX_MEMORY_LIMIT.
+    ml_memory_limit_kb: int = 512000
     max_code_bytes: int = 64 * 1024
     max_test_bytes: int = 2 * 1024 * 1024
     max_body_bytes: int = 8 * 1024 * 1024

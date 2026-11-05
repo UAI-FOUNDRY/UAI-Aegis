@@ -171,6 +171,10 @@ class Grader(ABC):
     def shown_stdout(self, result: ExecResult) -> str:
         return result.stdout
 
+    def shown_output(self, test: TestSpec, result: ExecResult, config: dict[str, Any]) -> str:
+        """What a run printed, as shown to the student (sample tests only) and the professor."""
+        return self.shown_stdout(result)
+
     async def grade(
         self, executor: Executor, target: RunTarget, tests: list[TestSpec], config: dict[str, Any]
     ) -> GradeResult:
@@ -196,7 +200,7 @@ class Grader(ABC):
                 if res.status is ExecStatus.compile_error:
                     compile_output = res.compile_output[:SHOWN_OUTPUT_CHARS]
             outcomes.append(_outcome(test, check.verdict, check.credit, res, check.message,
-                                     stdout=self.shown_stdout(res)))
+                                     stdout=self.shown_output(test, res, config)))
         return GradeResult(fraction=score(outcomes, config["scoring"]), tests=outcomes, compile_output=compile_output)
 
 

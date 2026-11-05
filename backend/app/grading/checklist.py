@@ -37,6 +37,14 @@ def checklist_verdict(test: TestSpec, stdout: str, partial_credit: bool, what: s
         results = results_from_stdout(stdout)
     except (ValueError, json.JSONDecodeError):
         return Check(Verdict.wrong_answer, 0.0, f"{what} could not be checked")
+    return verdict_from_results(test, results, partial_credit)
+
+
+def results_text(results: list[dict[str, Any]]) -> str:
+    return "\n".join(("✓ " if r["ok"] else "✗ ") + r["check"] for r in results)
+
+
+def verdict_from_results(test: TestSpec, results: list[dict[str, Any]], partial_credit: bool) -> Check:
     total = len(results)
     passed = sum(1 for r in results if r.get("ok"))
     if total == 0:
