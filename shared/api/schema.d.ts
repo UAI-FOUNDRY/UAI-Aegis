@@ -1546,13 +1546,11 @@ export interface components {
         Body_add_dataset_api_v1_questions__question_id__datasets_post: {
             /**
              * Train
-             * Format: binary
              * @description Training data CSV, with the target column
              */
             train: string;
             /**
              * Test
-             * Format: binary
              * @description Evaluation data CSV, with the target column
              */
             test: string;
@@ -1577,7 +1575,6 @@ export interface components {
         Body_import_users_api_v1_admin_users_import_post: {
             /**
              * File
-             * Format: binary
              * @description CSV: email, full_name, role, college_id, department_code, batch_code
              */
             file: string;
@@ -3153,6 +3150,10 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+            /** Input */
+            input?: unknown;
+            /** Context */
+            ctx?: Record<string, never>;
         };
     };
     responses: never;

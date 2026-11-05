@@ -65,3 +65,18 @@ Python only, development only).
   the network even if a request asks for it.
 - The containers are `privileged` because isolate needs to create sandboxes. Run
   Judge0 on a host (or VM) that holds nothing else sensitive.
+
+## Language versions (read before the first real exam)
+
+Judge0 1.13.1 ships old compilers and interpreters: Python 3.8.1 (id 71), Node.js
+12.14.0 (id 63), OpenJDK 13 (id 62), GCC 9.2 (C id 50, C++ id 54), SQLite 3.27 (id 82).
+
+- Students used to newer Python will hit errors on 3.8 (e.g. `def f(nums: list[int])`
+  fails, `match` statements do not exist). Add a newer Python to the Judge0 image (a
+  custom image that installs it, plus a row in Judge0's languages table) and point the
+  `python3` language row in Aegis at its id: `PATCH /api/v1/admin/languages/{id}`.
+- Judge0's Python has no numpy, pandas or scikit-learn, so **ML questions need a
+  custom Python** with those libraries installed; point the `python3-ml` language row
+  at it (it currently uses id 71 as a placeholder).
+- After any change, run `python -m app.cli check-judge0` to compare ids, then run the
+  simulator against the server.
