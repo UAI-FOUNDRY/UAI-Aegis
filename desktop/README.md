@@ -51,13 +51,39 @@ Specs: `docs/CLIENT_PROTOCOL.md` (the protocol), `backend/app/security/signing.p
   (Task Manager would otherwise open on the exam desktop); the student's previous values are
   saved and restored on exit, or on the next start after a crash.
 
+- macOS (`lockdown/macos.rs`, `lockdown/mac_keys.rs`): during an exam the app uses kiosk
+  presentation options (Dock and menu bar hidden; Cmd+Tab / Mission Control, Force Quit,
+  Hide and log out / restart / shut down off) and "simple" full screen (native full-screen
+  Spaces are switched off for the window). A Quartz key filter swallows what those leave on:
+  Spotlight (Cmd+Space), Ctrl+arrows / Ctrl+1..9 (Spaces), Mission Control / Launchpad /
+  Show Desktop keys, Cmd+Q / Cmd+H / Cmd+M, Cmd+Opt+Esc, Cmd+Opt+D, screenshots, fn+Q /
+  fn+N / fn+C ... (`shortcut_blocked`, summarised). It needs **Accessibility** permission:
+  the pre-exam check shows macOS's prompt and refuses to start until it is given. The app
+  menu has no Quit / Hide / Minimise, so Cmd+Q never quits (use the app's Quit button).
+  Not blockable (Touch ID lock, power button, lid): reported as focus loss, window pulled back.
+- Linux (`lockdown/linux.rs`): exams run only in the **"UAI Aegis Exam"** login session that
+  the .deb / .rpm installs (`src-tauri/linux/uai-aegis-exam.desktop`): the app alone inside
+  `cage`, a kiosk compositor with no panel, no app switching and console switching
+  (Ctrl+Alt+F1..F12) off. Before Start, release builds check the session in systemd-logind's
+  own record (not an environment variable: running `cage` in a window on a normal desktop
+  does not pass) and refuse otherwise, telling the student to log out and pick the session.
+  If the session stops being the one on screen, `focus_lost` is reported and it is switched
+  back. Quit ends the session (back to the login screen).
+
 Development builds only: `$env:AEGIS_SECURE_DESKTOP="off"` keeps the app on the normal desktop;
 `$env:AEGIS_LOCKDOWN="off"` before `npm run tauri dev` disables the
 lockdown; Ctrl+Alt+Shift+Q turns it off mid-run (Windows); `AEGIS_ALLOW_VM=1` skips the VM
-check. Release builds ignore all three.
+check. Release builds ignore all three. Linux development builds run on the normal desktop
+(the exam-session check is for release builds). macOS development builds need the
+Accessibility permission too (for the terminal or the dev binary), or `AEGIS_LOCKDOWN=off`.
 
-Next: "My results" screen, `network_reconnected`, installer + code signing, macOS/Linux
-specifics (keyboard blocking), blocked-app list from the server.
+Trying the Linux exam session: `npm run tauri build -- --bundles deb`, then
+`sudo apt install ./src-tauri/target/release/bundle/deb/*.deb` (pulls in `cage`), log out,
+pick "UAI Aegis Exam" on the login screen and sign in.
+
+Next: "My results" screen, `network_reconnected`, installer + code signing (Windows
+certificate, Apple Developer ID + notarisation), Apple's assessment mode once Apple grants
+the entitlement, blocked-app list from the server.
 
 ## Folder map
 
@@ -78,6 +104,8 @@ desktop/
     src/navguard.rs    blocks navigation away from the app's own pages
     src/commands.rs    the commands the UI may call + focus-loss reporting
     src/lockdown/      kiosk + detection loop (mod.rs), checks (detect.rs), Windows hook/RDP/BIOS (win32.rs), exam desktop (secure_desktop.rs)
+                       macos.rs + mac_keys.rs (kiosk options, key filter), linux.rs (exam-session checks)
+    linux/uai-aegis-exam.desktop   the Linux "UAI Aegis Exam" login session (installed by the .deb/.rpm)
     tests/live_backend.rs   full signed flow against a running backend
     build.rs, capabilities/default.json   command allow-list
     tauri.conf.json    window, CSP, bundle

@@ -467,6 +467,11 @@ pub async fn precheck(app: AppHandle) -> Result<PrecheckResult, ApiError> {
     if crate::lockdown::disabled_for_dev() {
         return Ok(PrecheckResult { ok: true, problems: vec![] });
     }
+    // macOS: show the system's "allow in Accessibility" prompt the first time.
+    #[cfg(target_os = "macos")]
+    if !crate::lockdown::macos::accessibility_allowed() {
+        crate::lockdown::macos::request_accessibility();
+    }
     let problems = tauri::async_runtime::spawn_blocking(move || crate::lockdown::detect::Scanner::new().scan(&app))
         .await
         .map_err(|_| ApiError::local("precheck_failed", "Could not check this laptop."))?;

@@ -35,6 +35,24 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "linux": {
+      "deb": {
+        "depends": [
+          "cage"
+        ],
+        "files": {
+          "/usr/share/wayland-sessions/uai-aegis-exam.desktop": "linux/uai-aegis-exam.desktop"
+        }
+      },
+      "rpm": {
+        "depends": [
+          "cage"
+        ],
+        "files": {
+          "/usr/share/wayland-sessions/uai-aegis-exam.desktop": "linux/uai-aegis-exam.desktop"
+        }
+      }
+    }
   }
 }

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=UAI Aegis Exam
+Comment=Proctored exam: only the UAI Aegis app, nothing else
+# cage: one full-screen app, no panel or app switching; console switching stays off
+# (no -s). -d: no window decorations. The WebKit setting avoids a blank window on some
+# graphics drivers. Quitting the app ends the session.
+Exec=env WEBKIT_DISABLE_DMABUF_RENDERER=1 cage -d -- /usr/bin/uai-aegis
+TryExec=cage
+DesktopNames=UAIAegisExam

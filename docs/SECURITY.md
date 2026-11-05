@@ -68,8 +68,10 @@ Penalties for misconduct are not automatic; the professor decides.
 
 ## Data protection
 
-- **Passwords:** Argon2id (RFC 9106 parameters). Unknown emails take the same time as
-  wrong passwords, and return the same error, so accounts cannot be enumerated.
+- **Passwords:** Argon2id with OWASP's recommended parameters (19 MiB, 2 iterations),
+  checked in worker threads so a whole lab signing in at once does not stall the
+  server. Unknown emails take the same time as wrong passwords, and return the same
+  error, so accounts cannot be enumerated.
 - **Login tokens:** 256-bit random, stored only as SHA-256 hashes, revocable instantly.
   Logging out, deactivating a user, changing a role or changing a password revokes
   sessions.
@@ -95,6 +97,10 @@ Penalties for misconduct are not automatic; the professor decides.
 - **Admins** manage accounts, subjects and grants but cannot read questions, tests or
   answers, and grants can only be given to professors.
 - A subject always keeps at least one owner.
+- **Self-marking is impossible:** student code runs in the sandbox, but verdicts are
+  always decided on the server. ML labels, function expected values and plot checks never
+  enter the sandbox; the sandbox only reports what the code produced (predictions, a
+  return value, what a chart contains).
 - **Datasets** (ML questions) are uploaded by professors through the portal, stored
   encrypted on the server, and sent to students only inside API responses (sample
   datasets) and to the sandbox (all datasets). Hidden labels never leave the server.
@@ -122,7 +128,10 @@ chain cannot be rebuilt to hide it. Check it any time with
 ## Hardening
 
 - Security headers on every response; API responses are `Cache-Control: no-store`.
-- Request size cap; code and test size limits.
+- Request size cap, enforced while the body arrives (also for chunked uploads with no
+  `Content-Length`); code and test size limits.
+- Dependencies are pinned and checked with `pip-audit` (no known vulnerabilities at
+  v0.9); re-run it before each deployment.
 - CORS limited to the portal's origin; no cookies, so no CSRF surface.
 - Interactive docs and the OpenAPI file are disabled in production.
 - Production refuses to start with development keys, SQLite, the local code runner,
@@ -135,8 +144,13 @@ chain cannot be rebuilt to hide it. Check it any time with
   them outside the repository and the database server, and back them up: losing the
   data key means losing every encrypted answer.
 - Put the API behind HTTPS (nginx or Caddy) and enable HSTS (automatic in production).
-  Set the proxy's request body limit (e.g. nginx `client_max_body_size 8m`); the API also
-  checks `Content-Length`, but only the proxy can cap chunked uploads.
+  Set the proxy's request body limit too (e.g. nginx `client_max_body_size 8m`).
+- Behind the proxy, start uvicorn with `--proxy-headers --forwarded-allow-ips=<proxy ip>`.
+  Otherwise every student appears to come from the proxy's address, and the per-IP
+  sign-in limit (30 failed attempts in 15 minutes) would apply to the whole lab at once.
+- Serve the API at the root of its host name (e.g. `https://aegis.uai.edu.in/api/v1/...`),
+  not under a path prefix that the proxy strips: the desktop app signs the exact path.
+- Run several workers (`--workers 4` or one per CPU core) with Redis configured.
 - Set `AEGIS_ALLOWED_EMAIL_DOMAINS` to the college domain.
 - Register each released desktop build (`/api/v1/admin/client-releases`) and set
   `AEGIS_REQUIRE_KNOWN_CLIENT=true`.

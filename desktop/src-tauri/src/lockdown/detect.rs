@@ -26,6 +26,14 @@ pub struct Finding {
 /// from the server so admins can change it without an app update.
 const REMOTE_CONTROL: &[(&str, &str)] = &[
     ("anydesk", "AnyDesk"),
+    // Linux: screen sharing servers
+    ("x11vnc", "x11vnc"),
+    ("krfb", "KDE Desktop Sharing"),
+    ("gnome-remote-desktop-daemon", "GNOME Remote Desktop"),
+    ("xrdp", "xrdp"),
+    // macOS: Screen Sharing / Remote Management
+    ("screensharingd", "macOS Screen Sharing"),
+    ("ardagent", "Apple Remote Desktop (Remote Management)"),
     ("teamviewer", "TeamViewer"),
     ("rustdesk", "RustDesk"),
     ("ultraviewer_desktop", "UltraViewer"),
@@ -46,6 +54,11 @@ const SCREEN_SHARING: &[(&str, &str)] = &[
 ];
 const RECORDERS: &[(&str, &str)] = &[
     ("obs64", "OBS Studio"),
+    ("simplescreenrecorder", "SimpleScreenRecorder"),
+    ("kazam", "Kazam"),
+    ("vokoscreenng", "vokoscreenNG"),
+    ("kooha", "Kooha"),
+    ("peek", "Peek"),
     ("obs32", "OBS Studio"),
     ("obs", "OBS Studio"),
     ("bandicam", "Bandicam"),
@@ -95,6 +108,35 @@ impl Scanner {
                 key: "remote_session".into(),
                 message: "This is a Remote Desktop session. Sit at the laptop itself.".into(),
                 details: json!({"source": "rdp"}),
+            });
+        }
+
+        // Linux: only in the "UAI Aegis Exam" login session (release builds; development
+        // builds run on the normal desktop).
+        #[cfg(all(target_os = "linux", not(debug_assertions)))]
+        if let Err(message) = super::linux::exam_session_id() {
+            out.push(Finding {
+                kind: "exam_session_missing",
+                key: "exam_session".into(),
+                message: message.into(),
+                details: json!({}),
+            });
+        }
+
+        // macOS: the key filter (Spotlight, Spaces, Notification Centre...) needs the
+        // Accessibility permission.
+        #[cfg(target_os = "macos")]
+        if !super::macos::key_filter_active() && !super::macos::start_key_filter() {
+            let message = if super::macos::accessibility_allowed() {
+                "Quit UAI Aegis and open it again (macOS applies the Accessibility permission on restart)."
+            } else {
+                "Allow UAI Aegis in System Settings > Privacy & Security > Accessibility, then press Start again."
+            };
+            out.push(Finding {
+                kind: "key_filter_off",
+                key: "key_filter".into(),
+                message: message.into(),
+                details: json!({}),
             });
         }
 

@@ -2,13 +2,27 @@
 //!
 //! While a session is on screen (active or locked) the window becomes a kiosk:
 //! full screen, always on top, not closable or minimisable, hidden from screen
-//! capture. On Windows a keyboard hook also blocks Alt+Tab, the Windows key and
-//! friends. A background loop watches for extra displays, VMs, remote sessions,
-//! remote-control / recording tools and debuggers, and reports each new finding once.
+//! capture. Per platform:
+//! - Windows: the app runs on its own Win32 desktop and a keyboard hook blocks Alt+Tab,
+//!   the Windows key and friends (secure_desktop.rs, win32.rs).
+//! - macOS: kiosk presentation options (no Dock, menu bar, app switching, Force Quit or
+//!   log out) and a key filter for Spotlight, Spaces and the rest (macos.rs, mac_keys.rs).
+//! - Linux: exams run only in the "UAI Aegis Exam" login session, a kiosk compositor with
+//!   nothing else in it (linux.rs).
+//!
+//! A background loop watches for extra displays, VMs, remote sessions, remote-control /
+//! recording tools and debuggers, and reports each new finding once. Anything that still
+//! gets out is reported as focus loss and the window is pulled back.
 //!
 //! The server decides what each event means (strike or lock); the app only reports.
 
 pub mod detect;
+#[cfg(target_os = "linux")]
+pub mod linux;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub mod mac_keys;
+#[cfg(target_os = "macos")]
+pub mod macos;
 #[cfg(windows)]
 pub mod secure_desktop;
 #[cfg(windows)]
@@ -30,7 +44,6 @@ const SCAN_EVERY: Duration = Duration::from_secs(3);
 /// Window managers need a moment to apply full screen after we ask for it.
 const FULLSCREEN_GRACE_MS: u64 = 4000;
 /// `shortcut_blocked` is info only; send at most one summary per this many seconds.
-#[cfg_attr(not(windows), allow(dead_code))]
 const SHORTCUT_REPORT_EVERY: Duration = Duration::from_secs(15);
 
 fn now_ms() -> u64 {
@@ -76,11 +89,38 @@ pub fn engage(app: &AppHandle) {
         let _ = w.set_closable(false);
         // (no set_resizable(false): some systems then refuse to grow the window to full screen)
         let _ = w.set_always_on_top(true);
-        let _ = w.set_fullscreen(true);
+        enter_fullscreen(app, &w);
         let _ = w.set_focus();
     }
     #[cfg(windows)]
     win32::set_blocking(true);
+    #[cfg(target_os = "macos")]
+    macos::set_blocking(true);
+}
+
+/// Full screen for the exam. macOS: "simple" full screen (no separate Space) plus the kiosk
+/// options; elsewhere the normal full screen.
+fn enter_fullscreen(app: &AppHandle, w: &tauri::WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = w.set_simple_fullscreen(true);
+        macos::set_kiosk(app, true);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        let _ = w.set_fullscreen(true);
+    }
+}
+
+/// Shortcuts the platform's key blocker swallowed since the last call.
+fn take_blocked_shortcuts() -> u32 {
+    #[cfg(windows)]
+    return win32::take_blocked_count();
+    #[cfg(target_os = "macos")]
+    return macos::take_blocked_count();
+    #[allow(unreachable_code)]
+    0
 }
 
 /// Bring the exam window back to the front (after a gesture, Win+D, a click elsewhere).
@@ -93,11 +133,13 @@ pub fn pull_back(app: &AppHandle) {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_always_on_top(true);
-        if !w.is_fullscreen().unwrap_or(false) {
-            let _ = w.set_fullscreen(true);
+        if !really_fullscreen(&w) {
+            enter_fullscreen(app, &w);
         }
         let _ = w.set_focus();
     }
+    #[cfg(target_os = "macos")]
+    macos::activate(app);
 }
 
 /// Back to a normal window (exam finished, signed out).
@@ -107,6 +149,11 @@ pub fn release(app: &AppHandle) {
     }
     #[cfg(windows)]
     win32::set_blocking(false);
+    #[cfg(target_os = "macos")]
+    {
+        macos::set_blocking(false);
+        macos::set_kiosk(app, false);
+    }
     if let Some(w) = app.get_webview_window("main") {
         #[cfg(windows)]
         if secure_desktop::on_secure_desktop() {
@@ -123,12 +170,56 @@ pub fn release(app: &AppHandle) {
             win32::show_on_all_desktops(hwnd.0, false);
             let _ = w.show();
         }
+        #[cfg(target_os = "macos")]
+        let _ = w.set_simple_fullscreen(false);
+        #[cfg(not(target_os = "macos"))]
         let _ = w.set_fullscreen(false);
         let _ = w.set_always_on_top(false);
         let _ = w.set_closable(true);
         let _ = w.set_minimizable(true);
         let _ = w.set_content_protected(false);
     }
+}
+
+/// Linux exam session: if it stops being the session on screen (a second login, another
+/// console), report it once per departure and switch straight back. Checked every second.
+#[cfg(target_os = "linux")]
+pub fn start_session_guard(app: AppHandle) {
+    std::thread::spawn(move || {
+        let mut away = false;
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+            if !engaged() {
+                away = false;
+                continue;
+            }
+            let Ok(session) = linux::exam_session_id() else { continue };
+            match linux::session_active(&session) {
+                Some(false) => {
+                    linux::reactivate(&session);
+                    if !away {
+                        away = true;
+                        let state = app.state::<crate::commands::AppState>();
+                        if let Some(session_id) = state.active_session() {
+                            let app = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let state = app.state::<crate::commands::AppState>();
+                                let _ = crate::commands::report_event(
+                                    &state,
+                                    &session_id,
+                                    "focus_lost",
+                                    json!({"left_exam_session": true}),
+                                )
+                                .await;
+                            });
+                        }
+                    }
+                }
+                Some(true) => away = false,
+                None => {}
+            }
+        }
+    });
 }
 
 /// Windows, separate exam desktop: if the screen leaves our desktop (Ctrl+Alt+Del then
@@ -175,7 +266,9 @@ pub fn start_desktop_guard(app: AppHandle) {
 /// that we *asked* for full screen, so also compare the real size with the monitor and
 /// check it is not minimised.
 fn really_fullscreen(w: &tauri::WebviewWindow) -> bool {
-    if !w.is_fullscreen().unwrap_or(true) || w.is_minimized().unwrap_or(false) {
+    // macOS simple full screen is not reported by is_fullscreen(): judge by size only.
+    let flag_ok = cfg!(target_os = "macos") || w.is_fullscreen().unwrap_or(true);
+    if !flag_ok || w.is_minimized().unwrap_or(false) {
         return false;
     }
     match (w.outer_size(), w.current_monitor()) {
@@ -222,6 +315,9 @@ pub fn start_monitor(app: AppHandle) {
             if !engaged() {
                 continue;
             }
+            // macOS: keep the kiosk options on (toggling full screen resets them).
+            #[cfg(target_os = "macos")]
+            macos::set_kiosk(&app, true);
 
             // 1. Environment checks (displays, VM, remote session, tools, debugger)
             let findings = scanner.scan(&app);
@@ -246,24 +342,24 @@ pub fn start_monitor(app: AppHandle) {
                     } else {
                         // Put it back: toggle so the request is not ignored as "already full screen".
                         let _ = w.unminimize();
+                        #[cfg(target_os = "macos")]
+                        let _ = w.set_simple_fullscreen(false);
+                        #[cfg(not(target_os = "macos"))]
                         let _ = w.set_fullscreen(false);
-                        let _ = w.set_fullscreen(true);
+                        enter_fullscreen(&app, &w);
                         let _ = w.set_focus();
                     }
                 }
             }
 
-            // 3. Shortcuts the keyboard hook swallowed (info only, summarised)
-            #[cfg(windows)]
+            // 3. Shortcuts the keyboard hook / key filter swallowed (info only, summarised)
             if last_shortcut_report.elapsed() >= SHORTCUT_REPORT_EVERY {
-                let count = win32::take_blocked_count();
+                let count = take_blocked_shortcuts();
                 if count > 0 {
                     last_shortcut_report = Instant::now();
                     let _ = crate::commands::report_event(&state, &session_id, "shortcut_blocked", json!({"count": count})).await;
                 }
             }
-            #[cfg(not(windows))]
-            let _ = &mut last_shortcut_report;
         }
     });
 }

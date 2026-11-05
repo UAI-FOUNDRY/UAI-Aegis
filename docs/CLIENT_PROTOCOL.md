@@ -184,11 +184,13 @@ the student; branch on `code`:
 
 ## 7. Lockdown checklist (app side)
 
-Windows first, then macOS, then Linux:
-
 - Full-screen, always-on-top kiosk window that cannot be minimised or closed during
   the exam.
-- Block Alt+Tab, Win key, Cmd+Tab and similar (low-level keyboard hook in Rust).
+- Windows: separate Win32 exam desktop + low-level keyboard hook (Alt+Tab, Win key...).
+- macOS: kiosk presentation options + a key filter (Accessibility permission required)
+  + an app menu without Quit/Hide/Minimise.
+- Linux: exams only in the "UAI Aegis Exam" login session (`cage` kiosk compositor),
+  checked against systemd-logind's session record.
 - Exclude the window from screen capture (Windows `SetWindowDisplayAffinity`, macOS
   window sharing type none).
 - Refuse outside clipboard content in the editor (allow copy/paste inside the editor).

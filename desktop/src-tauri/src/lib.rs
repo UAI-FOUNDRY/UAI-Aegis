@@ -6,19 +6,27 @@ pub mod lockdown;
 mod navguard;
 pub mod signing;
 
-use tauri::{Manager, WindowEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 
 pub fn run() {
     // Hash our own executable in the background now, not when the student presses Start.
     std::thread::spawn(|| {
         commands::build_sha256();
     });
-    tauri::Builder::default()
-        .plugin(navguard::plugin())
+    let builder = tauri::Builder::default().plugin(navguard::plugin());
+    // macOS: an app menu without Quit, Hide or Minimise, so Cmd+Q / Cmd+H / Cmd+M never act
+    // (the app has its own Quit button outside exams). Edit keeps copy and paste working.
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(exam_menu);
+    builder
         .manage(commands::AppState::new())
         .setup(|app| {
             app.state::<commands::AppState>().set_app(app.handle().clone());
             lockdown::start_monitor(app.handle().clone());
+            #[cfg(target_os = "macos")]
+            lockdown::macos::setup(app.handle());
+            #[cfg(target_os = "linux")]
+            lockdown::start_session_guard(app.handle().clone());
             #[cfg(windows)]
             {
                 lockdown::win32::start_keyboard_hook();
@@ -58,6 +66,37 @@ pub fn run() {
             commands::precheck,
             commands::quit_app,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running UAI Aegis");
+        .build(tauri::generate_context!())
+        .expect("error while building UAI Aegis")
+        .run(|_app, event| {
+            // Nothing quits the app while an exam is on screen (macOS Dock "Quit", log out...).
+            if let RunEvent::ExitRequested { api, .. } = &event {
+                if lockdown::engaged() {
+                    api.prevent_exit();
+                }
+            }
+        });
+}
+
+/// macOS menu bar: the app menu (About only) and Edit (needed for copy and paste in the
+/// editor). No Quit, Hide, Minimise, Close or Full Screen items.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn exam_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<tauri::menu::Menu<R>> {
+    use tauri::menu::{Menu, PredefinedMenuItem, Submenu};
+    let app_menu = Submenu::with_items(app, "UAI Aegis", true, &[&PredefinedMenuItem::about(app, None, None)?])?;
+    let edit = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, None)?,
+            &PredefinedMenuItem::redo(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+        ],
+    )?;
+    Menu::with_items(app, &[&app_menu, &edit])
 }
