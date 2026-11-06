@@ -3,7 +3,7 @@
   "info": {
     "title": "UAI Aegis",
     "description": "Proctored practical exams for Universal AI University.",
-    "version": "0.9.1"
+    "version": "0.10.2"
   },
   "paths": {
     "/health": {
