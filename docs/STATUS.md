@@ -1,6 +1,6 @@
 # UAI Aegis: what is built so far
 
-Backend version 0.9 (Dev 1), the student desktop app (Dev 2, docs/CLIENT_PROTOCOL.md)
+Backend version 0.10.2 (Dev 1), the student desktop app (Dev 2, docs/CLIENT_PROTOCOL.md)
 and the professor portal (Dev 3, docs/PORTAL_GUIDE.md).
 
 ## Accounts and access
@@ -57,6 +57,9 @@ and the professor portal (Dev 3, docs/PORTAL_GUIDE.md).
 - Students start from the desktop app; every request is signed with a key that lives only
   on that laptop, so answers cannot be sent from anywhere else.
 - Autosave, run against samples, submit against all tests, server-side countdown.
+- Leaving the exam (another window, a touchpad swipe to another desktop or Space, Task
+  Manager, another login) pulls the student straight back (about 0.2 s, checked 20 times
+  a second) and costs one strike per trip, however it was noticed.
 - Violations: minor events (switching windows, leaving full screen) are strikes; at the
   limit, or on serious events (remote desktop, VM, screen capture, second screen, another
   laptop), the session locks until the professor resumes (optionally with extra time) or
@@ -77,7 +80,7 @@ and the professor portal (Dev 3, docs/PORTAL_GUIDE.md).
 
 ## Checks
 
-- 85 automated tests (SQLite, and PostgreSQL + Redis as on the server), about 83% of
+- 110 automated tests (SQLite, and PostgreSQL + Redis as on the server), about 83% of
   the backend code covered.
 - Load-tested: 100 students signing in and starting an exam together, then autosaving
   and sending heartbeats, on a 2-core machine with one server process.

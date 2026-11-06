@@ -38,5 +38,6 @@ from the college website link your professor gives you.
 - Do not use a virtual machine.
 
 The app checks all of this when you press Start and tells you what to fix. During the exam,
-leaving the exam screen counts as a strike; too many strikes, or something serious like
+the app brings you straight back if you leave the exam screen (in a fraction of a second),
+and each time you leave counts as one strike; too many strikes, or something serious like
 remote-control software, pauses your exam until your professor lets you continue.

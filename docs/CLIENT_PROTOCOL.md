@@ -162,6 +162,19 @@ Kinds are `lower_snake_case`, max 48 characters; unknown kinds count as a strike
 `details` is free JSON up to 2 KB (e.g. the offending process name). Never put the
 student's code or personal data in it.
 
+**One trip away = one strike.** When the student gets off the exam (another window, a
+swipe to another desktop or Space, Task Manager, another login session...), the app pulls
+the exam back and reports the trip with `details.excursion`, an id unique to that trip
+(at most 64 characters; the app uses a random per-run prefix plus a counter). Every event
+of the same trip carries the same id, and the server counts only the first one; the rest
+are recorded as info with `same_excursion: true`. Events without an id count as usual.
+
+```
+{"events": [{"kind": "focus_lost", "details": {"excursion": "9f2c41d07a3b55e1-4", "reason": "window"}},
+            {"kind": "fullscreen_exited", "details": {"excursion": "9f2c41d07a3b55e1-4"}}]}
+→ one strike
+```
+
 ## 6. Error codes the app must handle
 
 Errors look like `{"detail": {"code": "...", "message": "...", ...}}`. Show `message` to
@@ -186,6 +199,10 @@ the student; branch on `code`:
 
 - Full-screen, always-on-top kiosk window that cannot be minimised or closed during
   the exam.
+- Check the window 20 times a second; if it is not focused or not full screen (for more
+  than 150 ms, so a popup flicker does not count), pull it straight back (every 100 ms
+  until it is back) and report the trip once with an `excursion` id (section 5). Leaving
+  the Windows exam desktop or the Linux exam session counts at once.
 - Windows: separate Win32 exam desktop + low-level keyboard hook (Alt+Tab, Win key...).
 - macOS: kiosk presentation options + a key filter (Accessibility permission required)
   + an app menu without Quit/Hide/Minimise.
