@@ -225,12 +225,18 @@ class Sim:
         fin = self.signed(s1, "POST", f"{base(s1)}/finish")
         self.check(fin.status_code == 200 and fin.json()["receipts"], "student 1 handed in and got a receipt")
 
-        # Student 2: strikes -> lock -> resume
+        # Student 2: strikes -> lock -> resume. Each trip away from the exam is reported by the
+        # app with one excursion id, however many detectors saw it, and costs one strike.
         self.signed(s2, "PUT", f"{base(s2)}/{answer}", {"language": lab["language"], "code": lab["wrong"]})
         status = {}
-        for _ in range(3):
-            status = self.signed(s2, "POST", f"{base(s2)}/events", {"events": [{"kind": "focus_lost"}]}).json()
-        self.check(status.get("status") == "locked", "student 2 locked after 3 window switches")
+        for trip in range(1, 4):
+            events = [{"kind": "focus_lost", "details": {"excursion": f"sim-{trip}", "reason": "window"}},
+                      {"kind": "fullscreen_exited", "details": {"excursion": f"sim-{trip}"}}]
+            status = self.signed(s2, "POST", f"{base(s2)}/events", {"events": events}).json()
+            if trip == 1:
+                self.check(status.get("strikes") == 1, "one trip away (focus + full screen lost) = one strike",
+                           str(status.get("strikes")))
+        self.check(status.get("status") == "locked", "student 2 locked after 3 trips away from the exam")
         r = self.signed(s2, "PUT", f"{base(s2)}/{answer}", {"language": lab["language"], "code": "x"})
         self.check(r.status_code == 423, "a locked student cannot save")
         self.call("POST", f"/api/v1/exams/{exam_id}/sessions/{sessions[s2.email]}/resume", prof, {"extra_minutes": 5})

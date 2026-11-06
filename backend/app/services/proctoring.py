@@ -80,6 +80,17 @@ def lock(session: ExamSession, reason: str, *, now: datetime | None = None) -> N
     session.flagged = True
 
 
+def excursion_of(details: dict[str, Any] | None) -> str | None:
+    """The app's id for one trip away from the exam (left the window, the exam desktop or
+    the exam session, until it was pulled back). Every event of that trip carries it."""
+    value = (details or {}).get("excursion")
+    if isinstance(value, str | int) and not isinstance(value, bool):
+        text = str(value)
+        if 0 < len(text) <= 64:
+            return text
+    return None
+
+
 def apply_event(
     session: ExamSession,
     policy: ExamPolicy,
@@ -89,14 +100,25 @@ def apply_event(
     details: dict[str, Any] | None = None,
     client_ts: datetime | None = None,
 ) -> ProctorEvent:
-    """Record an event and apply the policy. The caller adds the event to the DB session."""
+    """Record an event and apply the policy. The caller adds the event to the DB session.
+
+    One trip away from the exam is one strike: if the app reports several events for the
+    same excursion (e.g. focus lost and full screen left together), only the first counts;
+    the others are recorded as info with `same_excursion: true`."""
     severity = classify(kind, policy)
+    details = dict(details or {})
     was_active = session.status == SessionStatus.active
+    excursion = excursion_of(details) if source == "client" else None
+    if severity == Severity.minor and excursion is not None and excursion == session.last_excursion:
+        severity = Severity.info
+        details["same_excursion"] = True
     if was_active:
         if severity == Severity.severe and policy.lock_on_severe:
             lock(session, kind)
         elif severity in (Severity.minor, Severity.severe):
             session.strikes += 1
+            if excursion is not None:
+                session.last_excursion = excursion
             if session.strikes >= policy.max_strikes:
                 lock(session, "too_many_violations")
     return ProctorEvent(
@@ -104,7 +126,7 @@ def apply_event(
         kind=kind,
         severity=severity,
         source=source,
-        details=details or {},
+        details=details,
         client_ts=client_ts,
         caused_lock=was_active and session.status == SessionStatus.locked,
     )

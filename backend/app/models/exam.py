@@ -104,6 +104,9 @@ class ExamSession(IdMixin, CreatedMixin, Base):
     device_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("devices.id"))
     pending_device_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("devices.id"))
     strikes: Mapped[int] = mapped_column(Integer, default=0)
+    # The app's id of the trip away from the exam that last cost a strike: further events
+    # of the same trip do not count again (services/proctoring.py).
+    last_excursion: Mapped[str | None] = mapped_column(String(64))
     lock_reason: Mapped[str | None] = mapped_column(String(64))
     locked_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime())

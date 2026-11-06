@@ -173,3 +173,64 @@ async def test_concurrent_events_do_not_lose_strikes(api):
     assert all(r.status_code == 200 for r in responses)
     r = await api.signed(s, "POST", f"{base}/heartbeat", {})
     assert r.json()["strikes"] == 10
+
+
+async def test_one_trip_away_is_one_strike(api):
+    """The app tags every event of one trip away from the exam (left the window / exam
+    desktop / exam session until it was pulled back) with the same excursion id. However
+    many events that trip produces, it costs one strike."""
+    w = await build_exam(api, n_students=1, policy={"max_strikes": 3})
+    (s,) = w.students
+    sid, base = await _session(api, w, s)
+
+    trip1 = [{"kind": "focus_lost", "details": {"excursion": "run7-1", "reason": "window"}},
+             {"kind": "fullscreen_exited", "details": {"excursion": "run7-1"}}]
+    r = await api.signed(s, "POST", f"{base}/events", {"events": trip1})
+    assert r.json()["strikes"] == 1 and r.json()["status"] == "active"
+    # A late report of the same trip (e.g. from the desktop guard) does not count again
+    r = await api.signed(s, "POST", f"{base}/events",
+                         {"events": [{"kind": "focus_lost", "details": {"excursion": "run7-1"}}]})
+    assert r.json()["strikes"] == 1
+    # Info events of the trip are unaffected
+    r = await api.signed(s, "POST", f"{base}/events",
+                         {"events": [{"kind": "shortcut_blocked", "details": {"excursion": "run7-1", "count": 2}}]})
+    assert r.json()["strikes"] == 1
+
+    # A second trip is a second strike, a third locks (max_strikes 3)
+    r = await api.signed(s, "POST", f"{base}/events",
+                         {"events": [{"kind": "focus_lost", "details": {"excursion": "run7-2"}}]})
+    assert r.json()["strikes"] == 2
+    r = await api.signed(s, "POST", f"{base}/events",
+                         {"events": [{"kind": "focus_lost", "details": {"excursion": "run7-3"}},
+                                     {"kind": "fullscreen_exited", "details": {"excursion": "run7-3"}}]})
+    assert r.json()["status"] == "locked" and r.json()["strikes"] == 3
+
+    detail = (await api.client.get(f"/api/v1/exams/{w.exam_id}/sessions/{sid}", headers=w.prof_h)).json()
+    events = sorted(detail["events"], key=lambda e: e["created_at"])
+    counted = [e for e in events if e["severity"] == "minor"]
+    assert len(counted) == 3
+    repeats = [e for e in events if e["details"].get("same_excursion")]
+    assert {e["severity"] for e in repeats} == {"info"} and len(repeats) == 3
+
+    # After the professor resumes, a late event from the trip that caused the lock still
+    # does not count, but a new trip does
+    r = await api.client.post(f"/api/v1/exams/{w.exam_id}/sessions/{sid}/resume", headers=w.prof_h, json={})
+    assert r.json()["status"] == "active" and r.json()["strikes"] == 0
+    r = await api.signed(s, "POST", f"{base}/events",
+                         {"events": [{"kind": "focus_lost", "details": {"excursion": "run7-3"}}]})
+    assert r.json()["strikes"] == 0
+    r = await api.signed(s, "POST", f"{base}/events",
+                         {"events": [{"kind": "focus_lost", "details": {"excursion": "run8-1"}}]})
+    assert r.json()["strikes"] == 1
+
+
+async def test_excursion_ids_are_checked(api):
+    """Odd excursion values are ignored (the event counts as usual), never trusted."""
+    w = await build_exam(api, n_students=1, policy={"max_strikes": 10})
+    (s,) = w.students
+    _, base = await _session(api, w, s)
+    for bad in [True, "", "x" * 65, {"a": 1}, None]:
+        events = [{"kind": "focus_lost", "details": {"excursion": bad}}] * 2
+        r = await api.signed(s, "POST", f"{base}/events", {"events": events})
+        assert r.status_code == 200
+    assert r.json()["strikes"] == 10 or r.json()["status"] == "locked"
