@@ -145,8 +145,16 @@ pub fn exam_session_id() -> Result<String, &'static str> {
     Ok(id)
 }
 
-/// Is the session the one on screen? None if it cannot be told.
+/// Is the session the one on screen? None if it cannot be told. Checked several times a
+/// second, so logind's own session file is read first (no process started); loginctl only
+/// if that file is not there.
 pub fn session_active(id: &str) -> Option<bool> {
+    if let Ok(text) = std::fs::read_to_string(format!("/run/systemd/sessions/{id}")) {
+        let props = parse_props(&text);
+        if props.contains_key("active") {
+            return Some(truthy(props.get("active")));
+        }
+    }
     session_props(id).map(|p| truthy(p.get("active")))
 }
 

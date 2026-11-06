@@ -23,6 +23,18 @@ pub fn run() {
         .setup(|app| {
             app.state::<commands::AppState>().set_app(app.handle().clone());
             lockdown::start_monitor(app.handle().clone());
+            lockdown::start_guard(app.handle().clone());
+            // Development builds only: AEGIS_TEST_LOCKDOWN=1 switches the lockdown on at
+            // start, without an exam, to try the pull-back (desktop/README.md). Release
+            // builds do not contain this.
+            #[cfg(debug_assertions)]
+            if std::env::var("AEGIS_TEST_LOCKDOWN").as_deref() == Ok("1") {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    lockdown::engage(&handle);
+                });
+            }
             #[cfg(target_os = "macos")]
             lockdown::macos::setup(app.handle());
             #[cfg(target_os = "linux")]

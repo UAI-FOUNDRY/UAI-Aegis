@@ -1,25 +1,37 @@
 //! Windows-only lockdown pieces.
 //!
 //! - A low-level keyboard hook (WH_KEYBOARD_LL) that, while an exam is on screen,
-//!   swallows Alt+Tab, Alt+Esc, Alt+F4, Ctrl+Esc, Ctrl+Shift+Esc, the Windows keys and
-//!   Print Screen. Ctrl+Alt+Del and Win+L cannot be blocked by any app (Windows
-//!   protects them); leaving the window that way is still caught as focus loss.
+//!   swallows Alt+Tab, Alt+Esc, Alt+F4, Alt+Space, Ctrl+Esc, Ctrl+Shift+Esc, the Windows
+//!   keys (so every Win+... shortcut: Win+Tab, Win+D, Win+Ctrl+Left/Right for virtual
+//!   desktops, Win+R...) and Print Screen. Ctrl+Alt+Del and Win+L cannot be blocked by any
+//!   app (Windows protects them): Task Manager and Lock are switched off by policy
+//!   (secure_desktop.rs), and anything else is caught by the guard and pulled back.
+//! - The accessibility shortcuts (Shift five times for Sticky Keys, holding right Shift
+//!   for Filter Keys, holding Num Lock for Toggle Keys) are switched off during the exam:
+//!   their pop-ups link to Settings, a well-known way out of kiosk apps.
+//! - Forcing the exam window back to the foreground.
 //! - Remote Desktop session, debugger and BIOS (VM) checks.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Mutex;
 
 use windows_sys::Win32::Foundation::{GetLastError, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::Diagnostics::Debug::IsDebuggerPresent;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_F4, VK_LWIN, VK_MENU, VK_Q, VK_RWIN, VK_SHIFT, VK_SNAPSHOT, VK_TAB,
+    GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_F4, VK_LWIN, VK_MENU, VK_Q, VK_RWIN, VK_SHIFT, VK_SNAPSHOT, VK_SPACE,
+    VK_TAB,
 };
+use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetMessageW, GetSystemMetrics, GetWindowLongPtrW, SetWindowLongPtrW,
-    SetWindowPos, SetWindowsHookExW, TranslateMessage, GWL_EXSTYLE, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, MSG,
-    SM_REMOTESESSION, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WH_KEYBOARD_LL,
-    WM_KEYDOWN, WM_SYSKEYDOWN, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    BringWindowToTop, CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, GetSystemMetrics,
+    GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+    SetWindowsHookExW, ShowWindow, SystemParametersInfoW, TranslateMessage, GWL_EXSTYLE, KBDLLHOOKSTRUCT,
+    LLKHF_ALTDOWN, MSG, SM_REMOTESESSION, SPI_GETFILTERKEYS, SPI_GETSTICKYKEYS, SPI_GETTOGGLEKEYS,
+    SPI_SETFILTERKEYS, SPI_SETSTICKYKEYS, SPI_SETTOGGLEKEYS, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SW_RESTORE, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN, WS_EX_APPWINDOW,
+    WS_EX_TOOLWINDOW,
 };
 
 static BLOCKING: AtomicBool = AtomicBool::new(false);
@@ -69,7 +81,8 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
         let block = vk == VK_LWIN
             || vk == VK_RWIN
             || vk == VK_SNAPSHOT
-            || (alt && (vk == VK_TAB || vk == VK_ESCAPE || vk == VK_F4))
+            // Alt+Space opens the window menu (Move, Minimise, Close)
+            || (alt && (vk == VK_TAB || vk == VK_ESCAPE || vk == VK_F4 || vk == VK_SPACE))
             || (ctrl && vk == VK_ESCAPE); // Ctrl+Esc (Start) and Ctrl+Shift+Esc (Task Manager)
         if block {
             if is_down {
@@ -129,6 +142,101 @@ pub fn show_on_all_desktops(hwnd: HWND, on: bool) {
     }
     if cfg!(debug_assertions) {
         eprintln!("[aegis] all virtual desktops {}", if on { "ON" } else { "off" });
+    }
+}
+
+/// Bring the exam window to the foreground. Windows refuses `SetForegroundWindow` from an
+/// app that is not in front (it flashes the taskbar button instead); attaching to the
+/// input of the window that is in front lifts that restriction for this call.
+pub fn force_foreground(hwnd: HWND) {
+    unsafe {
+        let front = GetForegroundWindow();
+        if front == hwnd {
+            return;
+        }
+        let ours = GetCurrentThreadId();
+        let theirs = if front.is_null() { 0 } else { GetWindowThreadProcessId(front, std::ptr::null_mut()) };
+        let attached = theirs != 0 && theirs != ours && AttachThreadInput(ours, theirs, 1) != 0;
+        if IsIconic(hwnd) != 0 {
+            ShowWindow(hwnd, SW_RESTORE);
+        }
+        BringWindowToTop(hwnd);
+        SetForegroundWindow(hwnd);
+        if attached {
+            AttachThreadInput(ours, theirs, 0);
+        }
+    }
+}
+
+// --------------------------------------------------------------- accessibility shortcuts
+//
+// Only the *shortcuts* are switched off: a student who already has Sticky Keys or Filter
+// Keys turned on keeps them. The change is not written to the profile (fWinIni = 0), so
+// even if the app crashed it would be gone at the next sign-in; normally the saved
+// values are put back when the exam ends.
+
+/// STICKYKEYS and TOGGLEKEYS: size + flags.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct FlagsOnly {
+    cb_size: u32,
+    flags: u32,
+}
+
+/// FILTERKEYS.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct FilterKeys {
+    cb_size: u32,
+    flags: u32,
+    wait_ms: u32,
+    delay_ms: u32,
+    repeat_ms: u32,
+    bounce_ms: u32,
+}
+
+/// SKF_/FKF_/TKF_HOTKEYACTIVE and ..._CONFIRMHOTKEY (the same bits in all three).
+const HOTKEY_ACTIVE: u32 = 0x4;
+const CONFIRM_HOTKEY: u32 = 0x8;
+
+static SAVED_ACCESSIBILITY: Mutex<Option<(FlagsOnly, FilterKeys, FlagsOnly)>> = Mutex::new(None);
+
+unsafe fn spi<T>(action: u32, value: &mut T) -> bool {
+    SystemParametersInfoW(action, std::mem::size_of::<T>() as u32, (value as *mut T).cast(), 0) != 0
+}
+
+pub fn disable_accessibility_hotkeys() {
+    unsafe {
+        let mut sticky = FlagsOnly { cb_size: std::mem::size_of::<FlagsOnly>() as u32, ..Default::default() };
+        let mut filter = FilterKeys { cb_size: std::mem::size_of::<FilterKeys>() as u32, ..Default::default() };
+        let mut toggle = FlagsOnly { cb_size: std::mem::size_of::<FlagsOnly>() as u32, ..Default::default() };
+        if !(spi(SPI_GETSTICKYKEYS, &mut sticky) && spi(SPI_GETFILTERKEYS, &mut filter) && spi(SPI_GETTOGGLEKEYS, &mut toggle)) {
+            return;
+        }
+        let Ok(mut saved) = SAVED_ACCESSIBILITY.lock() else { return };
+        if saved.is_none() {
+            *saved = Some((sticky, filter, toggle));
+        }
+        sticky.flags &= !(HOTKEY_ACTIVE | CONFIRM_HOTKEY);
+        filter.flags &= !(HOTKEY_ACTIVE | CONFIRM_HOTKEY);
+        toggle.flags &= !(HOTKEY_ACTIVE | CONFIRM_HOTKEY);
+        spi(SPI_SETSTICKYKEYS, &mut sticky);
+        spi(SPI_SETFILTERKEYS, &mut filter);
+        spi(SPI_SETTOGGLEKEYS, &mut toggle);
+    }
+    if cfg!(debug_assertions) {
+        eprintln!("[aegis] accessibility shortcuts off");
+    }
+}
+
+pub fn restore_accessibility_hotkeys() {
+    let Some((mut sticky, mut filter, mut toggle)) = SAVED_ACCESSIBILITY.lock().ok().and_then(|mut s| s.take()) else {
+        return;
+    };
+    unsafe {
+        spi(SPI_SETSTICKYKEYS, &mut sticky);
+        spi(SPI_SETFILTERKEYS, &mut filter);
+        spi(SPI_SETTOGGLEKEYS, &mut toggle);
     }
 }
 

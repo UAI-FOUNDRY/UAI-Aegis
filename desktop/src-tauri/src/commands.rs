@@ -3,9 +3,7 @@
 //! there is deliberately no generic "sign these bytes" or "send this event" command
 //! (CLIENT_PROTOCOL.md section 8).
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex as StdMutex, OnceLock};
-use std::time::Duration;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use reqwest::Method;
@@ -26,8 +24,6 @@ pub const API_URL: &str = match option_env!("AEGIS_API_URL") {
 };
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Focus must stay lost this long before it counts (a notification flicker should not).
-const FOCUS_GRACE_MS: u64 = 1500;
 /// Same limit as the server (64 KB).
 const MAX_CODE_BYTES: usize = 64 * 1024;
 
@@ -36,8 +32,6 @@ pub struct AppState {
     drafts: StdMutex<Option<DraftStore>>,
     /// Session currently on screen (active or locked); focus loss is reported for it.
     active_session: StdMutex<Option<String>>,
-    /// Bumped on every focus change; a pending focus_lost report checks it is still current.
-    focus_gen: AtomicU64,
     /// Set once at startup (lib.rs) so session tracking can switch the lockdown on and off.
     app: OnceLock<AppHandle>,
 }
@@ -48,7 +42,6 @@ impl AppState {
             client: Mutex::new(ApiClient::new(API_URL)),
             drafts: StdMutex::new(None),
             active_session: StdMutex::new(None),
-            focus_gen: AtomicU64::new(0),
             app: OnceLock::new(),
         }
     }
@@ -211,41 +204,13 @@ pub(crate) async fn report_event(state: &AppState, session_id: &str, kind: &str,
     Ok(reply)
 }
 
-/// Called from the window event handler in lib.rs. Reports `focus_lost` if the window
-/// stays unfocused for FOCUS_GRACE_MS during an exam. Read from the OS window,
-/// not from JavaScript.
-pub fn on_focus_changed(app: &AppHandle, focused: bool) {
-    let state = app.state::<AppState>();
-    let generation = state.focus_gen.fetch_add(1, Ordering::SeqCst) + 1;
+/// Called from the window event handler in lib.rs (development log only). A lost focus
+/// is handled by the lockdown guard (lockdown/mod.rs, `start_guard`), which checks the
+/// window 20 times a second, pulls the exam straight back and reports the trip once.
+pub fn on_focus_changed(_app: &AppHandle, focused: bool) {
     if cfg!(debug_assertions) {
         eprintln!("[aegis] window {}", if focused { "focused" } else { "lost focus" });
     }
-    if focused {
-        return;
-    }
-    let Some(session_id) = state.active() else { return };
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(FOCUS_GRACE_MS)).await;
-        let state = app.state::<AppState>();
-        let still_away = |state: &AppState| {
-            state.focus_gen.load(Ordering::SeqCst) == generation && state.active().as_deref() == Some(session_id.as_str())
-        };
-        if !still_away(&state) {
-            return; // focus came back in time (a notification flicker), or the exam ended
-        }
-        // A real departure (touchpad gesture to another desktop, Win+D, a click on another
-        // window...). Gestures cannot be blocked by any app, so: count it, then pull the
-        // student back to the exam until the window has focus again.
-        let _ = report_event(&state, &session_id, "focus_lost", json!({"grace_ms": FOCUS_GRACE_MS})).await;
-        for _ in 0..600 {
-            if !still_away(&state) || !crate::lockdown::engaged() {
-                break;
-            }
-            crate::lockdown::pull_back(&app);
-            tokio::time::sleep(Duration::from_millis(1000)).await;
-        }
-    });
 }
 
 // ------------------------------------------------------------------- sign in (sections 1, 2)

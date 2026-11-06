@@ -10,12 +10,17 @@
 //! - Linux: exams run only in the "UAI Aegis Exam" login session, a kiosk compositor with
 //!   nothing else in it (linux.rs).
 //!
-//! A background loop watches for extra displays, VMs, remote sessions, remote-control /
-//! recording tools and debuggers, and reports each new finding once. Anything that still
-//! gets out is reported as focus loss and the window is pulled back.
+//! Anything that still gets the student off the exam (a touchpad swipe no app can block,
+//! a click on another window, Task Manager from Ctrl+Alt+Del...) is caught by a guard that
+//! checks the window 20 times a second: the exam is pulled back to the front within a
+//! fraction of a second and the trip is reported once, as one strike (away.rs).
+//!
+//! A slower loop watches for extra displays, VMs, remote sessions, remote-control /
+//! recording tools and debuggers, and reports each new finding once.
 //!
 //! The server decides what each event means (strike or lock); the app only reports.
 
+pub mod away;
 pub mod detect;
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -32,8 +37,10 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use serde_json::json;
+use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
+
+use away::{Action, Reason};
 
 static ENGAGED: AtomicBool = AtomicBool::new(false);
 /// Milliseconds since app start when lockdown was engaged (for the full-screen grace period).
@@ -43,6 +50,12 @@ static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 const SCAN_EVERY: Duration = Duration::from_secs(3);
 /// Window managers need a moment to apply full screen after we ask for it.
 const FULLSCREEN_GRACE_MS: u64 = 4000;
+/// The window needs a moment to come up and take focus when an exam starts.
+const SETTLE_MS: u64 = 1000;
+/// A full-screen request is re-sent at most this often (window managers animate it).
+const FULLSCREEN_RETRY_MS: u64 = 1000;
+static LAST_PULL_MS: AtomicU64 = AtomicU64::new(0);
+static LAST_FULLSCREEN_FIX_MS: AtomicU64 = AtomicU64::new(0);
 /// `shortcut_blocked` is info only; send at most one summary per this many seconds.
 const SHORTCUT_REPORT_EVERY: Duration = Duration::from_secs(15);
 
@@ -93,9 +106,17 @@ pub fn engage(app: &AppHandle) {
         let _ = w.set_focus();
     }
     #[cfg(windows)]
-    win32::set_blocking(true);
+    {
+        win32::set_blocking(true);
+        win32::disable_accessibility_hotkeys();
+    }
     #[cfg(target_os = "macos")]
-    macos::set_blocking(true);
+    {
+        macos::set_blocking(true);
+        if let Some(w) = app.get_webview_window("main") {
+            macos::set_all_spaces(&w, true);
+        }
+    }
 }
 
 /// Full screen for the exam. macOS: "simple" full screen (no separate Space) plus the kiosk
@@ -129,17 +150,121 @@ pub fn pull_back(app: &AppHandle) {
     if !engaged() {
         return;
     }
+    LAST_PULL_MS.store(now_ms(), Ordering::SeqCst);
+    #[cfg(target_os = "macos")]
+    macos::activate(app);
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_always_on_top(true);
         if !really_fullscreen(&w) {
-            enter_fullscreen(app, &w);
+            let now = now_ms();
+            if now.saturating_sub(LAST_FULLSCREEN_FIX_MS.load(Ordering::SeqCst)) >= FULLSCREEN_RETRY_MS {
+                LAST_FULLSCREEN_FIX_MS.store(now, Ordering::SeqCst);
+                // Toggle, so the request is not ignored as "already full screen".
+                #[cfg(target_os = "macos")]
+                let _ = w.set_simple_fullscreen(false);
+                #[cfg(not(target_os = "macos"))]
+                let _ = w.set_fullscreen(false);
+                enter_fullscreen(app, &w);
+            }
         }
         let _ = w.set_focus();
+        // Windows may refuse to hand the focus to a background app; force it.
+        #[cfg(windows)]
+        if let Ok(hwnd) = w.hwnd() {
+            win32::force_foreground(hwnd.0);
+        }
     }
-    #[cfg(target_os = "macos")]
-    macos::activate(app);
+}
+
+/// The student is off the exam: pull back (at most every `away::PULL_EVERY`) and report
+/// the trip once, as one strike, with its excursion id.
+pub fn left_exam(app: &AppHandle, reason: Reason, details: Value) {
+    if !engaged() {
+        return;
+    }
+    match away::off(reason) {
+        Action::None => {}
+        Action::Pull => {
+            if now_ms().saturating_sub(LAST_PULL_MS.load(Ordering::SeqCst)) >= away::PULL_EVERY.as_millis() as u64 {
+                pull_back(app);
+            }
+        }
+        Action::PullAndReport { id, reason } => {
+            pull_back(app);
+            let mut details = match details {
+                Value::Object(map) => map,
+                _ => serde_json::Map::new(),
+            };
+            details.insert("excursion".into(), json!(away::excursion_tag(id)));
+            details.insert("reason".into(), json!(reason.name()));
+            if cfg!(debug_assertions) {
+                eprintln!("[aegis] left the exam ({}), pulling back", reason.name());
+            }
+            let state = app.state::<crate::commands::AppState>();
+            if let Some(session_id) = state.active_session() {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app.state::<crate::commands::AppState>();
+                    let _ = crate::commands::report_event(&state, &session_id, reason.kind(), Value::Object(details))
+                        .await;
+                });
+            }
+        }
+    }
+}
+
+/// The exam is on screen again (focused, full screen, on the exam desktop / session).
+fn back_on_exam() {
+    if let Some(took) = away::back() {
+        if cfg!(debug_assertions) {
+            eprintln!("[aegis] back on the exam after {} ms", took.as_millis());
+        }
+    }
+}
+
+/// Checks the exam window 20 times a second while an exam is on screen: if it is not
+/// focused or no longer covers the screen, the student is pulled straight back.
+pub fn start_guard(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(away::CHECK_EVERY);
+        if !engaged() {
+            away::back();
+            continue;
+        }
+        let since = now_ms().saturating_sub(ENGAGED_AT_MS.load(Ordering::SeqCst));
+        if since < SETTLE_MS {
+            continue;
+        }
+        let Some(w) = app.get_webview_window("main") else { continue };
+        let focused = w.is_focused().unwrap_or(true) && !w.is_minimized().unwrap_or(false);
+        let full = since < FULLSCREEN_GRACE_MS || really_fullscreen(&w);
+        if focused && full {
+            // On Windows/Linux the desktop / session guards also have a say.
+            if !away_elsewhere() {
+                back_on_exam();
+            }
+            continue;
+        }
+        let reason = if focused { Reason::Fullscreen } else { Reason::Window };
+        left_exam(&app, reason, json!({}));
+    });
+}
+
+/// Is the screen on another desktop (Windows) or session (Linux) right now?
+fn away_elsewhere() -> bool {
+    #[cfg(windows)]
+    if secure_desktop::on_secure_desktop() {
+        if let Some(name) = secure_desktop::input_desktop_name() {
+            return name != secure_desktop::DESKTOP_NAME;
+        }
+    }
+    #[cfg(target_os = "linux")]
+    if let Ok(session) = linux::exam_session_id() {
+        return linux::session_active(&session) == Some(false);
+    }
+    false
 }
 
 /// Back to a normal window (exam finished, signed out).
@@ -147,12 +272,19 @@ pub fn release(app: &AppHandle) {
     if !ENGAGED.swap(false, Ordering::SeqCst) {
         return;
     }
+    away::back();
     #[cfg(windows)]
-    win32::set_blocking(false);
+    {
+        win32::set_blocking(false);
+        win32::restore_accessibility_hotkeys();
+    }
     #[cfg(target_os = "macos")]
     {
         macos::set_blocking(false);
         macos::set_kiosk(app, false);
+        if let Some(w) = app.get_webview_window("main") {
+            macos::set_all_spaces(&w, false);
+        }
     }
     if let Some(w) = app.get_webview_window("main") {
         #[cfg(windows)]
@@ -182,82 +314,38 @@ pub fn release(app: &AppHandle) {
 }
 
 /// Linux exam session: if it stops being the session on screen (a second login, another
-/// console), report it once per departure and switch straight back. Checked every second.
+/// console), switch straight back and report the trip once. Checked 4 times a second.
 #[cfg(target_os = "linux")]
 pub fn start_session_guard(app: AppHandle) {
-    std::thread::spawn(move || {
-        let mut away = false;
-        loop {
-            std::thread::sleep(Duration::from_secs(1));
-            if !engaged() {
-                away = false;
-                continue;
-            }
-            let Ok(session) = linux::exam_session_id() else { continue };
-            match linux::session_active(&session) {
-                Some(false) => {
-                    linux::reactivate(&session);
-                    if !away {
-                        away = true;
-                        let state = app.state::<crate::commands::AppState>();
-                        if let Some(session_id) = state.active_session() {
-                            let app = app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                let state = app.state::<crate::commands::AppState>();
-                                let _ = crate::commands::report_event(
-                                    &state,
-                                    &session_id,
-                                    "focus_lost",
-                                    json!({"left_exam_session": true}),
-                                )
-                                .await;
-                            });
-                        }
-                    }
-                }
-                Some(true) => away = false,
-                None => {}
-            }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(250));
+        if !engaged() {
+            continue;
+        }
+        let Ok(session) = linux::exam_session_id() else { continue };
+        if linux::session_active(&session) == Some(false) {
+            linux::reactivate(&session);
+            left_exam(&app, Reason::ExamSession, json!({"left_exam_session": true}));
         }
     });
 }
 
 /// Windows, separate exam desktop: if the screen leaves our desktop (Ctrl+Alt+Del then
 /// Task Manager, a fast user switch...), switch it straight back and, during an exam,
-/// report it once per departure. Checked twice a second.
+/// report the trip once. Checked 10 times a second.
 #[cfg(windows)]
 pub fn start_desktop_guard(app: AppHandle) {
     if !secure_desktop::on_secure_desktop() {
         return;
     }
-    std::thread::spawn(move || {
-        let mut away = false;
-        loop {
-            std::thread::sleep(Duration::from_millis(500));
-            match secure_desktop::input_desktop_name() {
-                Some(name) if name != secure_desktop::DESKTOP_NAME => {
-                    secure_desktop::switch_to_exam_desktop();
-                    if !away {
-                        away = true;
-                        let state = app.state::<crate::commands::AppState>();
-                        if let (true, Some(session_id)) = (engaged(), state.active_session()) {
-                            let app = app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                let state = app.state::<crate::commands::AppState>();
-                                let _ = crate::commands::report_event(
-                                    &state,
-                                    &session_id,
-                                    "focus_lost",
-                                    json!({"left_exam_desktop_for": name}),
-                                )
-                                .await;
-                            });
-                        }
-                    }
-                }
-                Some(_) => away = false,
-                None => {} // Ctrl+Alt+Del / UAC screen: cannot switch away from it
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(100));
+        match secure_desktop::input_desktop_name() {
+            Some(name) if name != secure_desktop::DESKTOP_NAME => {
+                secure_desktop::switch_to_exam_desktop();
+                left_exam(&app, Reason::ExamDesktop, json!({"left_exam_desktop_for": name}));
             }
+            _ => {} // on our desktop, or the Ctrl+Alt+Del / UAC screen (cannot switch away from it)
         }
     });
 }
@@ -288,7 +376,6 @@ pub fn start_monitor(app: AppHandle) {
         let mut scanner = detect::Scanner::new();
         let mut reported: HashSet<String> = HashSet::new();
         let mut current_session: Option<String> = None;
-        let mut fullscreen_reported = false;
         let mut last_shortcut_report = Instant::now();
 
         loop {
@@ -308,7 +395,6 @@ pub fn start_monitor(app: AppHandle) {
             let session = state.active_session();
             if session != current_session {
                 reported.clear();
-                fullscreen_reported = false;
                 current_session = session.clone();
             }
             let Some(session_id) = session else { continue };
@@ -329,30 +415,7 @@ pub fn start_monitor(app: AppHandle) {
             }
             reported = keys; // forget what went away, so it is reported again if it comes back
 
-            // 2. Full screen left (e.g. a window manager shortcut we could not block)
-            if now_ms().saturating_sub(ENGAGED_AT_MS.load(Ordering::SeqCst)) > FULLSCREEN_GRACE_MS {
-                if let Some(w) = app.get_webview_window("main") {
-                    let full = really_fullscreen(&w);
-                    if !full && !fullscreen_reported {
-                        fullscreen_reported = true;
-                        let _ = crate::commands::report_event(&state, &session_id, "fullscreen_exited", json!({})).await;
-                    }
-                    if full {
-                        fullscreen_reported = false;
-                    } else {
-                        // Put it back: toggle so the request is not ignored as "already full screen".
-                        let _ = w.unminimize();
-                        #[cfg(target_os = "macos")]
-                        let _ = w.set_simple_fullscreen(false);
-                        #[cfg(not(target_os = "macos"))]
-                        let _ = w.set_fullscreen(false);
-                        enter_fullscreen(&app, &w);
-                        let _ = w.set_focus();
-                    }
-                }
-            }
-
-            // 3. Shortcuts the keyboard hook / key filter swallowed (info only, summarised)
+            // 2. Shortcuts the keyboard hook / key filter swallowed (info only, summarised)
             if last_shortcut_report.elapsed() >= SHORTCUT_REPORT_EVERY {
                 let count = take_blocked_shortcuts();
                 if count > 0 {

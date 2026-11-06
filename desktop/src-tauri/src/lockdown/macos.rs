@@ -133,6 +133,9 @@ const KIOSK: usize = HIDE_DOCK
     | DISABLE_MENU_BAR_TRANSPARENCY;
 
 // NSWindowCollectionBehavior
+const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
+const MOVE_TO_ACTIVE_SPACE: usize = 1 << 1;
+const STATIONARY: usize = 1 << 4;
 const FULL_SCREEN_PRIMARY: usize = 1 << 7;
 const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
 const FULL_SCREEN_NONE: usize = 1 << 9;
@@ -168,6 +171,24 @@ pub fn disable_native_fullscreen(window: &tauri::WebviewWindow) {
     });
 }
 
+/// During an exam the window is on every Space and stays put in Mission Control, so a
+/// swipe to another Space still shows the exam (like "all virtual desktops" on Windows);
+/// the guard then gives it the focus back at once.
+pub fn set_all_spaces(window: &tauri::WebviewWindow, on: bool) {
+    let Ok(ns_window) = window.ns_window() else { return };
+    let ns_window = ns_window as usize;
+    let _ = window.run_on_main_thread(move || unsafe {
+        let ns_window = ns_window as Id;
+        let behavior = get_usize(ns_window, c"collectionBehavior") & !MOVE_TO_ACTIVE_SPACE;
+        let behavior = if on {
+            behavior | CAN_JOIN_ALL_SPACES | STATIONARY
+        } else {
+            behavior & !(CAN_JOIN_ALL_SPACES | STATIONARY)
+        };
+        send_usize(ns_window, c"setCollectionBehavior:", behavior);
+    });
+}
+
 // ------------------------------------------------------------------------- key filter
 
 static BLOCKING: AtomicBool = AtomicBool::new(false);
@@ -181,6 +202,13 @@ const HEAD_INSERT: u32 = 0; // kCGHeadInsertEventTap
 const TAP_DEFAULT: u32 = 0; // kCGEventTapOptionDefault: may drop events
 const KEY_DOWN: u32 = 10;
 const KEY_UP: u32 = 11;
+/// Trackpad swipes and pinches that the Dock turns into Mission Control, App Exposé,
+/// switching Spaces, Launchpad and Show Desktop arrive as "dock control" events
+/// (kCGSEventDockControl, not in the public headers). Swallowing them while an exam is on
+/// screen stops those gestures; scrolling, clicking and pointing are other event types and
+/// are not touched. If a macOS version sends them differently, the guard still pulls the
+/// student straight back.
+const DOCK_CONTROL: u32 = 30;
 const TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFF_FFFE;
 const TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
 const KEYBOARD_EVENT_KEYCODE: u32 = 9; // kCGKeyboardEventKeycode
@@ -203,7 +231,13 @@ extern "C" fn on_key(_proxy: *mut c_void, event_type: u32, event: *mut c_void, _
         }
         return event;
     }
-    if !BLOCKING.load(Ordering::Relaxed) || (event_type != KEY_DOWN && event_type != KEY_UP) {
+    if !BLOCKING.load(Ordering::Relaxed) {
+        return event;
+    }
+    if event_type == DOCK_CONTROL {
+        return null_mut();
+    }
+    if event_type != KEY_DOWN && event_type != KEY_UP {
         return event;
     }
     let (keycode, flags) = unsafe {
@@ -254,7 +288,7 @@ pub fn start_key_filter() -> bool {
     }
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || unsafe {
-        let mask = (1u64 << KEY_DOWN) | (1u64 << KEY_UP);
+        let mask = (1u64 << KEY_DOWN) | (1u64 << KEY_UP) | (1u64 << DOCK_CONTROL);
         let tap = CGEventTapCreate(SESSION_EVENT_TAP, HEAD_INSERT, TAP_DEFAULT, mask, on_key, null_mut());
         if tap.is_null() {
             let _ = tx.send(false);

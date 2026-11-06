@@ -26,8 +26,15 @@ Specs: `docs/CLIENT_PROTOCOL.md` (the protocol), `backend/app/security/signing.p
 - Run samples / Submit with per-test results; Finish (saves everything first) with receipts.
 - Server countdown, heartbeat every 10 s (never two at once), locked / waiting screen,
   submitted screen.
-- Events: `focus_lost` (window unfocused for 2 s, detected in Rust from the OS window),
-  `app_restarted` (resume more than 20 s after start), `paste_blocked` (text copied
+- Leaving the exam (`lockdown/away.rs`, `start_guard` in `lockdown/mod.rs`): the window is
+  checked 20 times a second from Rust (not from JavaScript). If it loses the focus or full
+  screen for more than 150 ms (shorter is a popup flicker), it is pulled straight back and
+  the trip is reported once (`focus_lost` or `fullscreen_exited`) with an `excursion` id;
+  the server counts one strike per trip, however many detectors saw it. Measured on Linux/X11
+  with another window grabbing the focus: back in 160-215 ms, each trip reported once.
+  Windows also forces the window to the foreground (`AttachThreadInput`), macOS re-activates
+  the app.
+- Other events: `app_restarted` (resume more than 20 s after start), `paste_blocked` (text copied
   outside the editor is refused; copy/paste inside the editor works).
 - All HTTP and signing in Rust; the web view can call only the commands in
   `src-tauri/build.rs` + `capabilities/default.json`. Strict CSP in `tauri.conf.json`.
@@ -36,7 +43,11 @@ Specs: `docs/CLIENT_PROTOCOL.md` (the protocol), `backend/app/security/signing.p
 - Lockdown while a session is on screen (`src-tauri/src/lockdown/`): full screen, always on
   top, cannot be closed or minimised, hidden from screen capture; leaving full screen is
   reported (`fullscreen_exited`) and undone. Windows: keyboard hook blocks Alt+Tab, Alt+Esc,
-  Alt+F4, Ctrl+Esc, Ctrl+Shift+Esc, Win keys, Print Screen (`shortcut_blocked`, summarised).
+  Alt+F4, Alt+Space, Ctrl+Esc, Ctrl+Shift+Esc, the Win keys (so every Win+ shortcut, including
+  Win+Tab and Win+Ctrl+arrows for virtual desktops) and Print Screen (`shortcut_blocked`,
+  summarised). The accessibility shortcuts (Shift five times, holding right Shift or Num Lock)
+  are switched off during the exam, because their pop-ups link to Settings; the student's own
+  settings are kept and restored.
 - Detection before Start (the student must fix it) and every 3 s during the exam, each
   reported once: extra displays, VMs (CPUID + firmware strings), Remote Desktop session,
   remote-control / screen-sharing / recording apps, debugger (release builds, Windows).
@@ -44,8 +55,10 @@ Specs: `docs/CLIENT_PROTOCOL.md` (the protocol), `backend/app/security/signing.p
 - Windows: the whole app runs on its own Win32 desktop (`lockdown/secure_desktop.rs`, like Safe
   Exam Browser): no taskbar, Start menu, Alt+Tab thumbnails, gestures or other apps. The
   launcher process switches the screen there and back; the app on that desktop switches the
-  screen straight back if the student leaves it (e.g. Ctrl+Alt+Del then Task Manager) and
-  reports `focus_lost`. If the desktop cannot be set up, it falls back to the normal desktop.
+  screen straight back (checked 10 times a second) if the student leaves it (e.g.
+  Ctrl+Alt+Del then Task Manager) and reports `focus_lost`. Touchpad and touchscreen gestures
+  do nothing on this desktop (they belong to Explorer, which is not there). On the fallback
+  normal desktop the window is on every virtual desktop, so a swipe still lands on the exam. If the desktop cannot be set up, it falls back to the normal desktop.
   The "Quit" button (outside exams) returns to normal Windows. While the app runs, the
   per-user policies DisableTaskMgr, DisableLockWorkstation and DisableChangePassword are on
   (Task Manager would otherwise open on the exam desktop); the student's previous values are
@@ -60,6 +73,10 @@ Specs: `docs/CLIENT_PROTOCOL.md` (the protocol), `backend/app/security/signing.p
   fn+N / fn+C ... (`shortcut_blocked`, summarised). It needs **Accessibility** permission:
   the pre-exam check shows macOS's prompt and refuses to start until it is given. The app
   menu has no Quit / Hide / Minimise, so Cmd+Q never quits (use the app's Quit button).
+  Trackpad: the window is on every Space and stays put in Mission Control, and the key filter
+  also swallows the Dock's gesture events (swipe between Spaces, Mission Control, App Exposé,
+  Launchpad pinch, Show Desktop spread). If a macOS version delivers them differently, the
+  guard still pulls the student back. Hot corners: pulled back the same way.
   Not blockable (Touch ID lock, power button, lid): reported as focus loss, window pulled back.
 - Linux (`lockdown/linux.rs`): exams run only in the **"UAI Aegis Exam"** login session that
   the .deb / .rpm installs (`src-tauri/linux/uai-aegis-exam.desktop`): the app alone inside
@@ -67,8 +84,14 @@ Specs: `docs/CLIENT_PROTOCOL.md` (the protocol), `backend/app/security/signing.p
   (Ctrl+Alt+F1..F12) off. Before Start, release builds check the session in systemd-logind's
   own record (not an environment variable: running `cage` in a window on a normal desktop
   does not pass) and refuse otherwise, telling the student to log out and pick the session.
-  If the session stops being the one on screen, `focus_lost` is reported and it is switched
-  back. Quit ends the session (back to the login screen).
+  If the session stops being the one on screen (checked 4 times a second), it is switched
+  back and `focus_lost` is reported. Quit ends the session (back to the login screen).
+
+Trying the pull-back without an exam (development builds only): `AEGIS_TEST_LOCKDOWN=1`
+switches the lockdown on 2 s after start; click another window and watch the log
+(`left the exam ... pulling back`, `back on the exam after N ms`). Quit with
+Ctrl+Alt+Shift+Q on Windows, or close it from a terminal (`AEGIS_LOCKDOWN=off` is the safer
+default while developing).
 
 Development builds only: `$env:AEGIS_SECURE_DESKTOP="off"` keeps the app on the normal desktop;
 `$env:AEGIS_LOCKDOWN="off"` before `npm run tauri dev` disables the
@@ -103,7 +126,7 @@ desktop/
     src/client.rs      HTTP client: serialise once, sign, send the same bytes; error parsing
     src/navguard.rs    blocks navigation away from the app's own pages
     src/commands.rs    the commands the UI may call + focus-loss reporting
-    src/lockdown/      kiosk + detection loop (mod.rs), checks (detect.rs), Windows hook/RDP/BIOS (win32.rs), exam desktop (secure_desktop.rs)
+    src/lockdown/      kiosk + guard + detection loop (mod.rs), trips away / one strike each (away.rs), checks (detect.rs), Windows hook/RDP/BIOS (win32.rs), exam desktop (secure_desktop.rs)
                        macos.rs + mac_keys.rs (kiosk options, key filter), linux.rs (exam-session checks)
     linux/uai-aegis-exam.desktop   the Linux "UAI Aegis Exam" login session (installed by the .deb/.rpm)
     tests/live_backend.rs   full signed flow against a running backend
