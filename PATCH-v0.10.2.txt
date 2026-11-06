@@ -1,0 +1,38 @@
+UAI Aegis patch v0.10.2 (against GitHub main 8e1c172, "Merge pull request #5")
+===========================================================================
+Includes everything in v0.10.1 (v0.9.1 backend fixes + v0.10 Mac/Linux lockdown + merge
+with Aryaman's PR #5), plus:
+
+Leaving the exam -> pulled straight back, one strike per trip
+- desktop: new lockdown/away.rs + guard in lockdown/mod.rs. The window is checked 20x a
+  second; if it loses focus or full screen for >150 ms it is pulled back (every 100 ms
+  until it is) and the trip is reported ONCE with an "excursion" id. Measured on
+  Linux/X11: back in 160-215 ms. Windows exam-desktop guard 10x/s, Linux session guard 4x/s.
+- Windows: Alt+Space blocked; Sticky/Filter/Toggle Keys shortcuts off during the exam
+  (their pop-ups link to Settings); window forced to the foreground (AttachThreadInput).
+- macOS: window on every Space + stationary in Mission Control; the Dock's gesture events
+  (Spaces swipe, Mission Control, App Expose, Launchpad pinch) swallowed by the key filter.
+- backend: one strike per excursion id (services/proctoring.py), new column
+  exam_sessions.last_excursion (migration 0003). Repeats are stored as info with
+  same_excursion: true. Tests added; simulate checks it too.
+- docs: docs/DEV_SETUP_WINDOWS.md (full setup + tests on Windows), CLIENT_PROTOCOL 5/7,
+  desktop README, STUDENT_SETUP, STATUS.
+
+Apply
+  git pull                      (be on 8e1c172)
+  unzip over the repo root, replace all
+  cd backend; .venv\Scripts\Activate.ps1
+  pip install -r requirements-dev.txt
+  alembic upgrade head          <- NEW COLUMN, do not skip
+  then follow docs/DEV_SETUP_WINDOWS.md section 5 to run the tests
+
+Checked here: backend 110 tests (SQLite and PostgreSQL+Redis, ML runtime included),
+simulate ALL CHECKS PASSED (2 workers, PostgreSQL+Redis), portal build + live monitor in a
+browser, desktop UI build, cargo test --lib (21 passed), cargo check --release; the
+Windows-only and macOS-only Rust code type-checked against the real windows-sys / Apple
+FFI declarations. Real Windows/macOS builds run in GitHub CI (desktop.yml).
+
+Commit
+  git add -A
+  git commit -m "v0.10.2: pull-back under 1 s, one strike per trip away; Mac/Linux lockdown; backend fixes"
+  git push

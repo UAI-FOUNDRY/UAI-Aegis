@@ -23,6 +23,9 @@ uai-aegis/
 
 ## Run the backend
 
+New on Windows? [docs/DEV_SETUP_WINDOWS.md](docs/DEV_SETUP_WINDOWS.md) sets up and tests all three
+parts (backend, portal, student app) in one pass.
+
 ### Option A: Python only (fastest for development)
 
 Needs **Python 3.12 or 3.13** (not 3.14 yet: two libraries have no ready-made Windows
