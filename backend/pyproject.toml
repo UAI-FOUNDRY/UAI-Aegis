@@ -1,8 +1,8 @@
 [project]
 name = "uai-aegis-backend"
-version = "0.10.2"
+version = "0.10.3"
 description = "UAI Aegis: proctored practical exams for Universal AI University"
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.12,<3.15"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

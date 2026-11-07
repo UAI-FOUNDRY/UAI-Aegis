@@ -123,7 +123,9 @@ class Settings(BaseSettings):
             return self.local_ml_python
         for candidate in (Path(".venv-ml") / "Scripts" / "python.exe", Path(".venv-ml") / "bin" / "python"):
             if candidate.exists():
-                return str(candidate.resolve())
+                # absolute(), not resolve(): on Linux/macOS a venv's python is a symlink to the
+                # base interpreter, and following it would run Python without the venv's libraries.
+                return str(candidate.absolute())
         return None
 
     @property

@@ -3,7 +3,7 @@
   "info": {
     "title": "UAI Aegis",
     "description": "Proctored practical exams for Universal AI University.",
-    "version": "0.10.2"
+    "version": "0.10.3"
   },
   "paths": {
     "/health": {
@@ -19,6 +19,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Health Health Get"
                 }
@@ -1367,6 +1368,7 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": true,
                   "type": "object",
                   "title": "Response Verify Audit Api V1 Admin Audit Verify Get"
                 }
@@ -2147,6 +2149,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Delete Question Api V1 Questions  Question Id  Delete"
                 }
               }
@@ -3234,6 +3237,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Regrade Api V1 Exams  Exam Id  Regrade Post"
                 }
               }
@@ -4722,6 +4726,7 @@
           "auto_details": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -4948,6 +4953,7 @@
             "title": "Target Id"
           },
           "details": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Details"
           }
@@ -5451,6 +5457,7 @@
             "title": "Client Ts"
           },
           "details": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Details"
           }
@@ -5480,6 +5487,7 @@
             "title": "Source"
           },
           "details": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Details"
           },
@@ -5655,14 +5663,17 @@
             "$ref": "#/components/schemas/ExamStatus"
           },
           "selection": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Selection"
           },
           "policy": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Policy"
           },
           "marking": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Marking"
           },
@@ -6123,6 +6134,7 @@
           },
           "failures": {
             "items": {
+              "additionalProperties": true,
               "type": "object"
             },
             "type": "array",
@@ -7024,6 +7036,7 @@
             "title": "Statement Md"
           },
           "grader_config": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Grader Config"
           },
@@ -7166,6 +7179,7 @@
             "default": "stdio"
           },
           "grader_config": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Grader Config"
           },
@@ -7322,6 +7336,7 @@
           "grader_config": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -7933,6 +7948,7 @@
           },
           "results": {
             "items": {
+              "additionalProperties": true,
               "type": "object"
             },
             "type": "array",
@@ -8594,6 +8610,7 @@
           },
           "questions": {
             "items": {
+              "additionalProperties": true,
               "type": "object"
             },
             "type": "array",

@@ -154,3 +154,21 @@ async def test_plot_answers_cannot_mark_themselves(api):
         out = (await c.post(f"/api/v1/questions/{qid}/try", headers=h,
                             json={"language": "python3-ml", "code": cheat})).json()
         assert out["fraction"] == 0.0, out
+
+
+def test_ml_venv_interpreter_is_not_followed_out_of_the_venv(tmp_path, monkeypatch):
+    """On Linux/macOS a venv's bin/python is a symlink to the base Python. Following it
+    (Path.resolve) runs Python without the venv's libraries, so ML answers fail with
+    'No module named numpy'. The path must stay inside .venv-ml."""
+    import os
+    import sys
+
+    from app.config import Settings
+
+    if os.name == "nt":
+        pytest.skip("Windows venvs use a real python.exe")
+    (tmp_path / ".venv-ml" / "bin").mkdir(parents=True)
+    os.symlink(sys.executable, tmp_path / ".venv-ml" / "bin" / "python")
+    monkeypatch.chdir(tmp_path)
+    path = Settings(local_ml_python="").ml_python_path
+    assert path == str(tmp_path / ".venv-ml" / "bin" / "python")

@@ -218,7 +218,11 @@ def _limits(memory_kb: int, cpu_seconds: int):  # pragma: no cover - runs in the
 def _child_env(workdir: str | None = None) -> dict[str, str]:
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONIOENCODING": "utf-8", "PYTHONHASHSEED": "0",
            # Plots are drawn off-screen (no display in a sandbox); matplotlib caches fonts in the run folder.
-           "MPLBACKEND": "Agg"}
+           "MPLBACKEND": "Agg",
+           # NumPy / scikit-learn math libraries start one thread per CPU and reserve buffers for
+           # each, which alone can exceed the memory limit (and makes timing depend on the
+           # server's CPU count). One thread each: same results, fair and predictable.
+           "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
     if workdir:
         env["MPLCONFIGDIR"] = workdir
     if os.name == "nt":  # Python cannot start on Windows without these
