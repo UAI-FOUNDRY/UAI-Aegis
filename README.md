@@ -1,312 +1,185 @@
-# UAI Aegis
+# Student desktop app (Dev 2)
 
-Proctored practical exams for Universal AI University. Students code in a locked-down
-desktop app on their own laptops; hidden test cases grade the work on the college
-server; professors run everything from a web portal.
+Tauri 2 (Rust + React) app for Windows, macOS and Linux.
 
-This repository holds the whole project: the **backend** (built and tested), the
-**professor portal** (guide steps 0–12 built and browser-tested) and the **student
-desktop app** (works on Windows: desktop/README.md). See
-[What's new for the team](#whats-new-for-the-team) for what each developer needs to know
-about the latest changes.
+Specs: `docs/CLIENT_PROTOCOL.md` (the protocol), `backend/app/security/signing.py`
+(reference signer, matched byte for byte), `api/openapi.json` (request/response shapes).
+
+## What works now
+
+- Sign in (+ forced password change), laptop registration with an Ed25519 key kept in the
+  OS keychain, exam list, start/resume with the access code.
+- Exam room laid out like a coding site: question on the left, a large Monaco editor
+  (bundled, no CDN) on the right with Run / Submit and a results panel under it; the divider
+  can be dragged and the results panel hidden. Question tabs in the top bar. No language
+  picker when the question allows one language. Markdown: raw HTML off + DOMPurify, links stripped.
+- Each kind of question shows its samples and results its own way (`src/testdata.tsx`):
+  normal programs (input / expected / your output), function questions ("Arguments" /
+  "Returns"; your return value, and what your code printed), SQL (the INSERT data and the
+  expected / your result as small tables), ML (training and test data as scrollable read-only
+  tables, first 300 rows with a row count, expected labels as the last column; your score and
+  predictions), HTML and chart questions (the checklist, then a tick or cross per check).
+  The server does not send the question kind yet, so it is worked out from the language and
+  the samples; a `kind` or `grader` field on the question will be used as soon as it exists.
+- Autosave every 5 s with `base_revision`; an AES-256-GCM encrypted local copy is written
+  before every save/run/submit, so a Wi-Fi drop or crash loses nothing (resent on resume).
+- Run samples / Submit with per-test results; Finish (saves everything first) with receipts.
+- Server countdown, heartbeat every 10 s (never two at once), locked / waiting screen,
+  submitted screen.
+- Leaving the exam (`lockdown/away.rs`, `start_guard` in `lockdown/mod.rs`): the window is
+  checked 20 times a second from Rust (not from JavaScript). If it loses the focus or full
+  screen for more than 150 ms (shorter is a popup flicker), it is pulled straight back and
+  the trip is reported once (`focus_lost` or `fullscreen_exited`) with an `excursion` id;
+  the server counts one strike per trip, however many detectors saw it. Measured on Linux/X11
+  with another window grabbing the focus: back in 160-215 ms, each trip reported once.
+  Windows also forces the window to the foreground (`AttachThreadInput`), macOS re-activates
+  the app.
+- Other events: `app_restarted` (resume more than 20 s after start), `paste_blocked` (text copied
+  outside the editor is refused; copy/paste inside the editor works).
+- All HTTP and signing in Rust; the web view can call only the commands in
+  `src-tauri/build.rs` + `capabilities/default.json`. Strict CSP in `tauri.conf.json`.
+  The web view cannot navigate anywhere except the app's own pages (`src-tauri/src/navguard.rs`).
+
+- Lockdown while a session is on screen (`src-tauri/src/lockdown/`): full screen, always on
+  top, cannot be closed or minimised, hidden from screen capture; leaving full screen is
+  reported (`fullscreen_exited`) and undone. Windows: keyboard hook blocks Alt+Tab, Alt+Esc,
+  Alt+F4, Alt+Space, Ctrl+Esc, Ctrl+Shift+Esc, the Win keys (so every Win+ shortcut, including
+  Win+Tab and Win+Ctrl+arrows for virtual desktops) and Print Screen (`shortcut_blocked`,
+  summarised). The accessibility shortcuts (Shift five times, holding right Shift or Num Lock)
+  are switched off during the exam, because their pop-ups link to Settings; the student's own
+  settings are kept and restored.
+- Detection before Start (the student must fix it) and every 3 s during the exam, each
+  reported once: extra displays, VMs (CPUID + firmware strings), Remote Desktop session,
+  remote-control / screen-sharing / recording apps, debugger (release builds, Windows).
+
+- Windows: the whole app runs on its own Win32 desktop (`lockdown/secure_desktop.rs`, like Safe
+  Exam Browser): no taskbar, Start menu, Alt+Tab thumbnails, gestures or other apps. The
+  launcher process switches the screen there and back; the app on that desktop switches the
+  screen straight back (checked 10 times a second) if the student leaves it (e.g.
+  Ctrl+Alt+Del then Task Manager) and reports `focus_lost`. Touchpad and touchscreen gestures
+  do nothing on this desktop (they belong to Explorer, which is not there). On the fallback
+  normal desktop the window is on every virtual desktop, so a swipe still lands on the exam. If the desktop cannot be set up, it falls back to the normal desktop.
+  The "Quit" button (outside exams) returns to normal Windows. While the app runs, the
+  per-user policies DisableTaskMgr, DisableLockWorkstation and DisableChangePassword are on
+  (Task Manager would otherwise open on the exam desktop); the student's previous values are
+  saved and restored on exit, or on the next start after a crash.
+
+- macOS (`lockdown/macos.rs`, `lockdown/mac_keys.rs`): during an exam the app uses kiosk
+  presentation options (Dock and menu bar hidden; Cmd+Tab / Mission Control, Force Quit,
+  Hide and log out / restart / shut down off) and "simple" full screen (native full-screen
+  Spaces are switched off for the window). A Quartz key filter swallows what those leave on:
+  Spotlight (Cmd+Space), Ctrl+arrows / Ctrl+1..9 (Spaces), Mission Control / Launchpad /
+  Show Desktop keys, Cmd+Q / Cmd+H / Cmd+M, Cmd+Opt+Esc, Cmd+Opt+D, screenshots, fn+Q /
+  fn+N / fn+C ... (`shortcut_blocked`, summarised). It needs **Accessibility** permission:
+  the pre-exam check shows macOS's prompt and refuses to start until it is given. The app
+  menu has no Quit / Hide / Minimise, so Cmd+Q never quits (use the app's Quit button).
+  Trackpad: the window is on every Space and stays put in Mission Control, and the key filter
+  also swallows the Dock's gesture events (swipe between Spaces, Mission Control, App Exposé,
+  Launchpad pinch, Show Desktop spread). If a macOS version delivers them differently, the
+  guard still pulls the student back. Hot corners: pulled back the same way.
+  Not blockable (Touch ID lock, power button, lid): reported as focus loss, window pulled back.
+- Linux (`lockdown/linux.rs`): exams run only in the **"UAI Aegis Exam"** login session that
+  the .deb / .rpm installs (`src-tauri/linux/uai-aegis-exam.desktop`): the app alone inside
+  `cage`, a kiosk compositor with no panel, no app switching and console switching
+  (Ctrl+Alt+F1..F12) off. Before Start, release builds check the session in systemd-logind's
+  own record (not an environment variable: running `cage` in a window on a normal desktop
+  does not pass) and refuse otherwise, telling the student to log out and pick the session.
+  If the session stops being the one on screen (checked 4 times a second), it is switched
+  back and `focus_lost` is reported. Quit ends the session (back to the login screen).
+
+Trying the pull-back without an exam (development builds only): `AEGIS_TEST_LOCKDOWN=1`
+switches the lockdown on 2 s after start; click another window and watch the log
+(`left the exam ... pulling back`, `back on the exam after N ms`). Quit with
+Ctrl+Alt+Shift+Q on Windows, or close it from a terminal (`AEGIS_LOCKDOWN=off` is the safer
+default while developing).
+
+Development builds only: `$env:AEGIS_SECURE_DESKTOP="off"` keeps the app on the normal desktop;
+`$env:AEGIS_LOCKDOWN="off"` before `npm run tauri dev` disables the
+lockdown; Ctrl+Alt+Shift+Q turns it off mid-run (Windows); `AEGIS_ALLOW_VM=1` skips the VM
+check. Release builds ignore all three. Linux development builds run on the normal desktop
+(the exam-session check is for release builds). macOS development builds need the
+Accessibility permission too (for the terminal or the dev binary), or `AEGIS_LOCKDOWN=off`.
+
+Trying the Linux exam session: `npm run tauri build -- --bundles deb`, then
+`sudo apt install ./src-tauri/target/release/bundle/deb/*.deb` (pulls in `cage`), log out,
+pick "UAI Aegis Exam" on the login screen and sign in.
+
+Next: "My results" screen, `network_reconnected`, installer + code signing (Windows
+certificate, Apple Developer ID + notarisation), Apple's assessment mode once Apple grants
+the entitlement, blocked-app list from the server.
+
+## Folder map
 
 ```
-uai-aegis/
-  backend/      FastAPI API, database, security, grading, exam engine   (Dev 1)
-  desktop/      Tauri student app                                        (Dev 2)
-  portal/       React professor portal                                   (Dev 3)
-  shared/       UI components + API client generated from the contract  (Dev 3)
-  api/          openapi.json: the API contract all three apps share
-  judge/        Judge0 sandbox config
-  docs/         STATUS.md (what is built), SECURITY.md, CLIENT_PROTOCOL.md (Dev 2), PORTAL_GUIDE.md (Dev 3)
+desktop/
+  src/
+    App.tsx            sign in, password change, exam list
+    ExamRoom.tsx       question | editor layout, autosave, run/submit/finish, heartbeat, lock screen
+    testdata.tsx       samples and results per question kind (tables, arguments, checklists)
+    CodeEditor.tsx     Monaco (+ its language workers) + paste guard
+    markdown.ts        safe Markdown (markdown-it, html off, DOMPurify)
+    api.ts             typed wrappers for the Rust commands
+  src-tauri/
+    src/signing.rs     canonical message + Ed25519 signing (tests vs the Python vectors)
+    src/keystore.rs    device key + draft key in Windows Credential Manager / macOS Keychain / Secret Service
+    src/drafts.rs      encrypted local copy of answers (tests: round trip, tamper, wrong session)
+    src/client.rs      HTTP client: serialise once, sign, send the same bytes; error parsing
+    src/navguard.rs    blocks navigation away from the app's own pages
+    src/commands.rs    the commands the UI may call + focus-loss reporting
+    src/lockdown/      kiosk + guard + detection loop (mod.rs), trips away / one strike each (away.rs), checks (detect.rs), Windows hook/RDP/BIOS (win32.rs), exam desktop (secure_desktop.rs)
+                       macos.rs + mac_keys.rs (kiosk options, key filter), linux.rs (exam-session checks)
+    linux/uai-aegis-exam.desktop   the Linux "UAI Aegis Exam" login session (installed by the .deb/.rpm)
+    tests/live_backend.rs   full signed flow against a running backend
+    build.rs, capabilities/default.json   command allow-list
+    tauri.conf.json    window, CSP, bundle
 ```
 
-## Run the backend
+## One-time setup (Windows)
 
-New on Windows? [docs/DEV_SETUP_WINDOWS.md](docs/DEV_SETUP_WINDOWS.md) sets up and tests all three
-parts (backend, portal, student app) in one pass.
+1. Rust: https://rustup.rs (default options).
+2. Visual Studio Build Tools with **Desktop development with C++**.
+3. Node.js LTS.
+4. WebView2 is already part of Windows 10/11.
 
-### Option A: Python only (fastest for development)
+## Run it
 
-Needs **Python 3.12 or 3.13** (not 3.14 yet: two libraries have no ready-made Windows
-installs for it, and pip would try to compile them). On Windows with several Pythons
-installed, create the environment with `py -3.13 -m venv .venv`.
+Terminal 1, the backend (see the root README):
 
-```bash
+```
 cd backend
-python -m venv .venv
-source .venv/bin/activate            # Windows: .venv\Scripts\activate
-pip install -r requirements-dev.txt
-alembic upgrade head                 # creates aegis-dev.db (SQLite)
-python -m app.cli demo-data          # demo accounts + Python, SQL and ML lab exams
+.venv\Scripts\Activate.ps1
 uvicorn app.main:app --reload
 ```
 
-Open http://localhost:8000/docs for the interactive API. Demo logins are printed by
-`demo-data` and listed under [Demo accounts](#demo-accounts).
+Terminal 2, the app:
 
-Without Judge0, code runs through the **local dev runner**: Python only, and not a
-sandbox. That is fine on your own laptop and refused in production.
-
-**ML / data-science labs** (`python3-ml`: NumPy, pandas, matplotlib, seaborn, scikit-learn)
-need those libraries in a separate virtualenv, which the local runner finds by itself:
-
-```bash
-python -m venv .venv-ml
-.venv-ml/bin/pip install -r requirements-ml.txt     # Windows: .venv-ml\Scripts\pip install -r requirements-ml.txt
-python -m app.cli bml-lab                           # optional: the BML lab, one validated question per practical
+```
+cd desktop
+npm install          # first time only
+npm run tauri dev    # first build takes a few minutes
 ```
 
-`bml-lab` talks to the running server, so start `uvicorn` first.
+Open the exam as the professor (Swagger at http://localhost:8000/docs, `POST /api/v1/exams/{id}/open`;
+for testing, `PATCH /api/v1/exams/{id}` with `{"join_window_minutes": 0}` removes the 15-minute start limit),
+then sign in to the app as `student1.demo@aegis.local` / `Aegis-demo-2026!` and type the code.
 
-### Demo accounts
+The server address defaults to `http://localhost:8000`. For another server, set it when building:
+`$env:AEGIS_API_URL="https://exams.example.edu"; npm run tauri build`.
 
-Created by `python -m app.cli demo-data` (development only: never on the college server).
-**Every demo account uses the password `Aegis-demo-2026!`** (capital A, ends with `!`).
+## Tests
 
-| Role | Email | Password | Use it for |
-|---|---|---|---|
-| Admin | `admin.demo@aegis.local` | `Aegis-demo-2026!` | Portal admin area: users, CSV import, departments, batches, languages, app releases, audit |
-| Professor | `prof.demo@aegis.local` | `Aegis-demo-2026!` | Portal: subjects, questions, exams, live monitor, grading, results (owns all demo subjects) |
-| Student 1 | `student1.demo@aegis.local` | `Aegis-demo-2026!` | Desktop app (college ID `UAI-DEMO-001`, batch `CSE-AIML-2025-A`) |
-| Student 2 | `student2.demo@aegis.local` | `Aegis-demo-2026!` | Desktop app (`UAI-DEMO-002`) |
-| Student 3 | `student3.demo@aegis.local` | `Aegis-demo-2026!` | Desktop app (`UAI-DEMO-003`) |
-
-Admins and professors sign in to the **portal**; students sign in to the **desktop app**
-(the portal refuses student accounts). The admin area only appears for the admin
-account. If a demo login says *Wrong email or password*, check the account is still
-active (Admin → Users) and use the portal's **👁 Show** button to check the password.
-
-### Run the professor portal
-
-Needs Node.js 20+. The backend must be running (above).
-
-```bash
-cd portal
-npm install
-npm run dev                          # http://localhost:5173
+```
+cd desktop/src-tauri
+cargo test --lib                                   # signing matches the Python reference
+$env:AEGIS_TEST_EXAM_ID="<exam id>"; cargo test --test live_backend -- --ignored --nocapture
 ```
 
-`portal/.env.development` points it at `VITE_API_URL=http://localhost:8000`. Start the
-backend with `AEGIS_CORS_ORIGINS=http://localhost:5173` (PowerShell:
-`$env:AEGIS_CORS_ORIGINS = "http://localhost:5173"`) so the browser may call it. After
-`api/openapi.json` changes, regenerate the typed client with `npm run gen:api`, then
-`npm run build` shows every screen that needs updating.
+The live test plays the professor (opens the exam or rotates its code), then signs in as
+`student2.demo` (`AEGIS_TEST_STUDENT` to change), registers a throwaway key, starts, sends a
+heartbeat, reads the session and checks that a wrong key gets `401 bad_signature`.
 
-### Option B: Docker (PostgreSQL + Redis, like the server)
+## Adding a command
 
-```bash
-cp .env.example .env
-docker compose up --build                     # API on :8000
-docker compose exec api python -m app.cli demo-data
-docker compose --profile judge up --build     # add the Judge0 sandbox (read judge/README.md first)
-```
-
-### Tests
-
-```bash
-cd backend
-pytest -q                                     # SQLite, about 40 s
-# Same suite on PostgreSQL and Redis (what CI runs):
-AEGIS_TEST_DATABASE_URL=postgresql+asyncpg://user:pass@localhost/aegis_test \
-AEGIS_TEST_REDIS_URL=redis://localhost:6379/0 pytest -q
-```
-
-The suite covers the full exam flow, the lock policy, device signing, replay
-protection, data isolation between students and between professors, encryption at
-rest, the audit chain, CSV import, the Judge0 client and the database migrations.
-
-### Check that everything works
-
-With the server running (`uvicorn app.main:app --reload`), open a **second** terminal in
-`backend/`, activate the environment and run:
-
-```bash
-python -m app.cli simulate            # all four labs; or --lab python | sql | ml | function
-```
-
-It plays a whole exam against the real server, like the apps will: the professor opens
-a fresh exam and its live monitor (which must show each change within a moment), one
-student answers correctly, one is locked for switching windows and
-resumed by the professor, one is caught running remote-desktop software and has their
-exam ended. Then it closes the exam, waits for grading, releases results and verifies
-the audit log. Every step prints `[OK]` or `[FAIL]`, ending with `ALL CHECKS PASSED`.
-It creates a new exam each time, so you can run it as often as you like (it needs
-`demo-data` first).
-
-For the code itself, `pytest -q` runs the automated test suite (about 40 seconds).
-
-### Updating an existing setup
-
-After pulling new code, always run:
-
-```bash
-pip install -r requirements-dev.txt   # new or updated libraries
-alembic upgrade head          # apply new database changes
-python -m app.cli seed        # add new default languages (e.g. sql, python3-ml, html)
-python -m app.cli demo-data   # add any new demo subjects (existing ones are kept)
-.venv-ml/bin/pip install -r requirements-ml.txt   # ML runtime (Windows: .venv-ml\Scripts\pip ...)
-cd ../portal && npm install   # portal libraries
-```
-
-Then **restart `uvicorn`** (without `--reload` it keeps running the old code, e.g. new
-question types are missing from the editor).
-
-## Question types
-
-- **Programs (stdio)**: any language; input on stdin, output compared (exact, line,
-  whitespace, case-insensitive, float tolerance or any order).
-- **SQL**: SQLite. Either a SELECT whose result set is compared, or statements
-  (INSERT/UPDATE/...) checked by a professor's query. Each test has its own data.
-- **ML**: the student writes `solve(train_csv, test_csv)` in Python; predictions are
-  scored on the server against hidden labels (accuracy, F1, precision, recall, R²,
-  RMSE, MAE) with partial marks by threshold. Datasets are uploaded as CSVs.
-- **Function (LeetCode style)**: the student writes a function (any name) in Python
-  or JavaScript and returns the answer. Each test is a JSON list of arguments; the
-  returned value is compared (exactly, with a float tolerance, or as a list in any
-  order). The editor starts empty for every question type.
-- **HTML**: the student writes a web page. It is parsed (never rendered) and each test
-  is a list of checks, e.g. `exists form#signup`, `count ul > li = 3`,
-  `text h1 contains welcome`, `attr img alt`. Partial credit per check.
-- **Plot**: the student draws a chart with matplotlib or seaborn (`python3-ml`). It is
-  drawn off-screen and checked, e.g. `chart bar`, `title contains sales`,
-  `xlabel = Region`, `legend`, `count bars >= 4`. The question can attach a `data.csv`.
-
-Any language the college enables can be used for program (stdio) questions: Admin →
-Languages → **Add engineering language pack** adds 28 (C, C++, Java, Python, Python ML,
-JavaScript, TypeScript, Go, Rust, C#, Kotlin, PHP, Ruby, Bash, Assembly, R, Octave,
-Scala, Prolog, Lisp, Haskell, Swift, Perl, Lua, Pascal, Fortran, SQL, HTML). On a laptop
-only Python runs (local runner); everything runs on Judge0.
-
-A lab exam can be **locked to one language** (e.g. Python only). Students then see only
-that language, and the server rejects anything else.
-
-## How the pieces fit
-
-- **Student app → API**: every exam request is signed with an Ed25519 key that lives
-  only on that laptop (docs/CLIENT_PROTOCOL.md).
-- **Portal → API**: normal bearer-token requests (docs/PORTAL_GUIDE.md), plus a
-  WebSocket that pushes live monitor changes the moment they happen.
-- **API → Judge0**: code runs in isolate sandboxes; the API compares outputs itself.
-- **API → PostgreSQL**: all data, with student code, hidden tests and reference
-  solutions encrypted (AES-256-GCM).
-- **API → Redis**: rate limits, replay protection, and passing live monitor updates
-  between API workers.
-
-The two apps never talk to each other, only to the API. `api/openapi.json` is the
-contract: generate the TypeScript client from it, and regenerate it whenever the backend
-changes (`python -m app.cli export-openapi`; CI fails if it is out of date).
-
-## Designed to grow without code changes
-
-- Departments, labs, subjects, batches, professors and students are rows, added from
-  the admin API or a CSV upload.
-- Programming languages are rows (`/api/v1/admin/languages`); the editor mode and
-  time multiplier come from the same row, so the apps need no update.
-- Question types are grader plug-ins (`backend/app/grading/`). A new type is a new
-  module; nothing else changes.
-- Who sees what is data: per-subject or per-exam grants (owner, editor, grader, viewer).
-- Exam rules (strikes, what locks, run limits, whether hidden results are shown,
-  marking split) are per-exam settings, not code.
-- Schema changes go through Alembic migrations; the API is versioned (`/api/v1`).
-
-## What happens when a student breaks the rules
-
-Minor events (focus lost, full screen exited) are strikes with a warning. At the strike
-limit, or on any serious event (VM, remote desktop, screen capture, second monitor,
-another laptop), the session **locks**. The server then refuses every save, run and
-submit until a professor resumes it (optionally with extra time) or ends it. The timer
-keeps running while locked, and if nobody acts, the frozen code is auto-submitted and
-flagged at the deadline. Details in docs/SECURITY.md.
-
-## Not built yet
-
-- College SSO (Google or Microsoft): waiting on IT. The dev login uses the same
-  session system, so SSO only adds a sign-in route.
-- Input generators (random large tests from a small script).
-- Large ML datasets (file storage with MinIO); datasets are limited to 2 MB per split for now.
-- Excel export of marks (the portal's Results page has a disabled placeholder button).
-- Code-similarity checks (planned as flags only).
-- Hosting: the stack is containerised and ready for the college server.
-
-## What's new for the team
-
-Latest Dev 3 work (portal guide steps 9–12 and new question types). Everything below is
-covered by tests: `pytest -q` passes in full (100 passed), and each portal screen was
-checked in a real browser against the running backend.
-
-### Portal (Dev 3): what exists now
-
-- **Exams tab**: create / edit exams in sections (basics, batches, questions,
-  selection rules, policy, marking, languages), readiness check with links to fixes,
-  open with a full-screen access code (copy, rotate), stop exam, edit tests and
-  re-grade, and **Create new exam from this** for closed exams (a closed exam is never
-  reopened; the copy is a fresh draft).
-- **Live monitor** (`/exams/:id/monitor`): WebSocket updates, locked students first in
-  red with a sound, counters, batch filter, lock / resume / terminate, close exam;
-  falls back to polling if the socket cannot connect.
-- **Session, results and grading** (`/exams/:id/sessions/:sid`, `/results`, `/answers`):
-  timeline, highlighted code, per-test results, run history, manual marks or override
-  with a note, re-grade (manual marks kept), release results, answer-by-answer checking
-  with ← / → keys.
-- **Admin area** (`/admin/...`, admin account only): users, CSV import (dry run first),
-  departments, batches and members, languages (+ engineering pack), app releases,
-  audit log with integrity check.
-- **Question editor**: every step clickable, live language list per question type,
-  HTML and plot editors. **Password fields** have a 👁 Show / Hide button.
-
-### Dev 1 (backend): please review
-
-- **New graders**: `grading/html.py`, `grading/plot.py`, and `grading/checklist.py`
-  (shared verdict logic for check-list graders). A new `Grader.needs_python` flag
-  replaces the hard-coded `grader == "sql"` in `services/exams.build_target`; SQL and
-  HTML set it. The stdio grader now refuses `html` answers.
-- **ML runtime**: the local runner runs `python3-ml` with `backend/.venv-ml` (or
-  `AEGIS_LOCAL_ML_PYTHON`), sets `MPLBACKEND=Agg`, and now normalises Windows `\r\n` to
-  `\n` (expected outputs generated on Windows used to contain `\r`). The ML and plot
-  harnesses limit BLAS to one thread (Judge0 allows 60 processes/threads).
-- **Judge0 for ML**: `judge/Dockerfile.ml` adds NumPy, pandas, matplotlib, seaborn,
-  scikit-learn and SciPy to Judge0's Python 3.8; `docker-compose.yml` builds it for both
-  Judge0 services. **Not yet tested on a Docker host**: please build it and run
-  `python -m app.cli bml-lab` there. ML questions use 512000 KB (= `MAX_MEMORY_LIMIT`).
-- **BML lab**: `python -m app.cli bml-lab` (`app/bml_lab.py`) builds a validated
-  Basics of Machine Learning subject through the API: one question per practical
-  (stdio, plot, ML, function), synthetic seeded datasets, and a draft exam.
-- `seed.py` adds the `html` language; `subjects.py` keeps `require_staff` (admins may
-  read subject metadata, never questions); `api/openapi.json` was regenerated.
-- **Small API gaps the portal works around** (worth fixing in the API):
-  `GET /exams/{id}/sessions/{sid}` returns `row.batch_code = null` (the portal reads it
-  from `/monitor`); `GET /admin/audit` has no filters (the portal filters loaded
-  entries); `GET /admin/languages` does not return `judge0_id`.
-
-### Dev 2 (desktop app): please review
-
-- **New question types students will see**:
-  - `html`: answers are web pages in the `html` language (Monaco mode `html`). Run and
-    Submit return a check list in `stdout` (`✓ exists form`, `✗ doctype`) and a summary
-    in `message`.
-  - `plot`: answers are matplotlib/seaborn code in `python3-ml`; the program reads
-    `data.csv` and draws charts (nothing is shown; the server checks the figure). Same
-    ✓ / ✗ feedback.
-  - For both, **sample** tests name the failed checks; **hidden** tests only say e.g.
-    `3 of 5 checks passed`.
-- **More languages**: up to 28 can be enabled. Always take the editor mode from each
-  language's `monaco_id` (some are `plaintext`, e.g. Assembly, Prolog, Haskell, Octave).
-- ML questions have **no starter code**; the statement explains
-  `solve(train_csv, test_csv)`.
-- **Build note**: if `npm run build` in `desktop/` fails with *Cannot find module
-  '@tailwindcss/postcss'*, a `postcss.config.*` in a folder **above** the repo is being
-  picked up by Vite. Move that file; the desktop app itself builds fine.
-
-## Useful commands
-
-```bash
-python -m app.cli gen-key          # new key for AEGIS_DATA_KEYS / AEGIS_AUDIT_KEY
-python -m app.cli create-admin --email you@college.edu
-python -m app.cli verify-audit     # check nobody edited the audit log
-python -m app.cli export-openapi   # refresh api/openapi.json
-python -m app.cli check-judge0     # compare language ids with the Judge0 server
-python -m app.cli simulate         # play full exams against the running server (ALL CHECKS PASSED)
-python -m app.cli bml-lab          # create the validated Basics of ML lab subject
-alembic revision --autogenerate -m "describe change"   # after changing models
-```
+1. Write it in `src-tauri/src/commands.rs` and add it to `generate_handler!` in `lib.rs`.
+2. Add its name to `build.rs` and `allow-<name-with-dashes>` to `capabilities/default.json`.
+3. Add a typed wrapper in `src/api.ts`.

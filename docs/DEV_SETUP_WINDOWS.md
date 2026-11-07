@@ -6,7 +6,7 @@ The root README and `desktop/README.md` have more detail on each part.
 
 ## 1. Install once
 
-- Python 3.13 (or 3.12; not 3.14 yet), with "Add to PATH".
+- Python 3.14, 3.13 or 3.12 (from python.org), with "Add to PATH".
 - Node.js 22 LTS.
 - Git.
 - For the student app: Rust (https://rustup.rs, default options) and Visual Studio Build
@@ -17,9 +17,10 @@ The root README and `desktop/README.md` have more detail on each part.
 
 ```powershell
 cd backend
-py -3.13 -m venv .venv
+py -m venv .venv
 .venv\Scripts\Activate.ps1                 # if blocked: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-pip install -r requirements-dev.txt
+                                           # the prompt now starts with (.venv)
+python -m pip install -r requirements-dev.txt
 Copy-Item ..\.env.example .env             # settings are read from backend\.env
 alembic upgrade head                       # creates aegis-dev.db (SQLite)
 python -m app.cli seed
@@ -32,7 +33,7 @@ portal needs. Without it, portal sign-in fails with a CORS error in the browser 
 ML / plot questions need their own environment (the local runner finds it by itself):
 
 ```powershell
-py -3.13 -m venv .venv-ml
+py -m venv .venv-ml
 .venv-ml\Scripts\pip install -r requirements-ml.txt
 ```
 
@@ -102,7 +103,7 @@ Expected: `pytest` all passed (a few ML tests are skipped if `.venv-ml` is missi
 ```powershell
 cd backend
 pip install -r requirements-dev.txt
-alembic upgrade head                       # new database columns (e.g. 0003 in v0.10.2)
+alembic upgrade head                       # new database columns (e.g. 0003 since v0.10.2)
 python -m app.cli seed
 python -m app.cli demo-data
 cd ..\portal;  npm install
@@ -119,6 +120,10 @@ Then restart `uvicorn`.
   (capital A, ends with `!`); run `python -m app.cli demo-data` again if the database is new.
 - **New question types missing**: `uvicorn` was started without `--reload` and still runs
   old code; restart it.
-- **pip tries to compile something**: you are on Python 3.14; use 3.13.
+- **pip says "Defaulting to user installation" or "Microsoft Visual C++ 14.0 or greater is
+  required"**: the virtual environment is not active (the prompt does not start with
+  `(.venv)`), or the requirements are older than v0.10.3. Run `.venv\Scripts\Activate.ps1`
+  and install again. Anything that already went into your user folder does no harm to the
+  project; leave it (other projects of yours may use it).
 - **`.ps1` cannot be loaded**: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 - **ML question says numpy is missing**: create `.venv-ml` (step 2).

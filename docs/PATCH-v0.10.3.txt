@@ -1,0 +1,41 @@
+UAI Aegis patch v0.10.3 (against GitHub main 8e1c172, "Merge pull request #5")
+===========================================================================
+Replaces v0.10.2 (everything in it is included). New in v0.10.3:
+
+Install works on Python 3.14 (no compiler needed)
+- backend/requirements.txt: asyncpg 0.31.0, pydantic 2.12.5, pydantic-settings 2.14.2
+  (also fixes a known vulnerability), sqlalchemy 2.0.56. Every package now has a
+  ready-made Windows wheel for Python 3.12, 3.13 and 3.14. pyproject: Python 3.12-3.14.
+- api/openapi.json + shared/api/schema.d.ts regenerated (free-form JSON fields are now
+  typed as objects instead of empty records; portal builds).
+- CI runs the backend tests on Python 3.12 and 3.14.
+
+Bugs found while testing on 3.14
+- app/config.py: the ML interpreter (.venv-ml) was found with Path.resolve(), which on
+  Linux/macOS follows the venv's python symlink to the base Python and loses numpy etc.
+  Now absolute(). Regression test added. (Windows was not affected.)
+- app/grading/executor.py: NumPy/scikit-learn math libraries run single-threaded in the
+  local sandbox (OPENBLAS/OMP/MKL_NUM_THREADS=1); one thread per CPU could exceed the
+  512 MB memory limit at import.
+
+Apply (Windows)
+  git pull                                   (be on 8e1c172)
+  unzip over the repo root, replace all
+  cd backend
+  py -m venv .venv                           (once; any Python 3.12-3.14)
+  .venv\Scripts\Activate.ps1                 (prompt must start with (.venv))
+  python -m pip install -r requirements-dev.txt
+  alembic upgrade head
+  python -m app.cli seed
+  python -m app.cli demo-data
+  pytest -q
+  Then docs/DEV_SETUP_WINDOWS.md for the portal, the student app and the other tests.
+
+Checked here: backend tests on Python 3.12, 3.13 and 3.14 (SQLite and PostgreSQL+Redis,
+ML runtime on 3.14 too), simulate ALL CHECKS PASSED on 3.14 (PostgreSQL+Redis, 2 workers),
+pip-audit clean, alembic check clean, portal build. Desktop unchanged since v0.10.2.
+
+Commit
+  git add -A
+  git commit -m "v0.10.3: pull-back + one strike per trip, Mac/Linux lockdown, Python 3.14 support, backend fixes"
+  git push
