@@ -28,15 +28,24 @@ async def ws_base(app):
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, lifespan="off", log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, lifespan="off", log_level="warning",
+                                           timeout_graceful_shutdown=2))
     task = asyncio.create_task(server.serve())
     for _ in range(200):
-        if server.started:
+        if server.started or task.done():
             break
         await asyncio.sleep(0.02)
+    assert server.started, f"test server did not start on port {port}"
     yield f"ws://127.0.0.1:{port}"
+    # Stop it. uvicorn waits for open connections to close, with no time limit; a WebSocket
+    # left half-closed (seen on Windows) would hang the test run forever. Give it a moment,
+    # then force it.
     server.should_exit = True
-    await task
+    try:
+        await asyncio.wait_for(asyncio.shield(task), 3)
+    except TimeoutError:
+        server.force_exit = True
+        await asyncio.wait_for(task, 5)
 
 
 async def _ticket(api, headers, exam_id) -> str:

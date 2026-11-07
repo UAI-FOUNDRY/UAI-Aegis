@@ -9,6 +9,8 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 filterwarnings = ["error::pytest.PytestUnraisableExceptionWarning"]
+# If a test hangs, print where every thread is stuck after 2 minutes (the run continues).
+faulthandler_timeout = 120
 
 [tool.ruff]
 line-length = 120
