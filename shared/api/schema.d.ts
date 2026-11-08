@@ -423,6 +423,45 @@ export interface paths {
         patch: operations["set_release_status_api_v1_admin_client_releases__release_id__patch"];
         trace?: never;
     };
+    "/api/v1/admin/blocked-apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Blocked Apps */
+        get: operations["list_blocked_apps_api_v1_admin_blocked_apps_get"];
+        put?: never;
+        /**
+         * Add Blocked App
+         * @description Students' apps check for it before Start and every few seconds during an exam,
+         *     from their next exam on (no app update needed).
+         */
+        post: operations["add_blocked_app_api_v1_admin_blocked_apps_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/blocked-apps/{app_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Blocked App */
+        delete: operations["remove_blocked_app_api_v1_admin_blocked_apps__app_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/audit": {
         parameters: {
             query?: never;
@@ -718,6 +757,49 @@ export interface paths {
          */
         post: operations["add_dataset_api_v1_questions__question_id__datasets_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/questions/{question_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Files */
+        get: operations["list_files_api_v1_questions__question_id__files_get"];
+        put?: never;
+        /**
+         * Add File
+         * @description Attach a data file to a question (a CSV for a pandas lab, a big training set...).
+         *     Students see it in the exam with a preview and a column summary, and their code opens
+         *     it by name, e.g. ``pd.read_csv("marks.csv")``: it is put next to the program for every
+         *     run. Uploading a file with an existing name replaces it (not while an exam using the
+         *     question is live).
+         */
+        post: operations["add_file_api_v1_questions__question_id__files_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/questions/{question_id}/files/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get File */
+        get: operations["get_file_api_v1_questions__question_id__files__file_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete File */
+        delete: operations["delete_file_api_v1_questions__question_id__files__file_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1028,6 +1110,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/exams/{exam_id}/sessions/{session_id}/extend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Extend Session
+         * @description Give one student extra time (working or paused): e.g. their laptop failed, they
+         *     lost time moving to another one, or they have an accommodation. Their app picks up
+         *     the new end time within seconds.
+         */
+        post: operations["extend_session_api_v1_exams__exam_id__sessions__session_id__extend_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/exams/{exam_id}/extend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Extend Exam
+         * @description Give everyone who is still working (or paused) extra time, e.g. after a power cut
+         *     or a network outage in the lab. Students who start later get the full duration anyway.
+         */
+        post: operations["extend_exam_api_v1_exams__exam_id__extend_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/exams/{exam_id}/sessions/{session_id}/terminate": {
         parameters: {
             query?: never;
@@ -1201,6 +1326,47 @@ export interface paths {
         };
         /** Get Session */
         get: operations["get_session_api_v1_student_sessions__session_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/student/sessions/{session_id}/questions/{question_id}/files/{file_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * File Preview
+         * @description A data file's summary: column types and ranges, the first rows (tables) or the
+         *     first characters (text). Only for a question of the student's own running exam.
+         */
+        get: operations["file_preview_api_v1_student_sessions__session_id__questions__question_id__files__file_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/student/blocked-apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Blocked Apps
+         * @description Apps that must be closed before an exam starts (the app checks before Start).
+         */
+        get: operations["blocked_apps_api_v1_student_blocked_apps_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1407,7 +1573,9 @@ export interface components {
             /** Auto Fraction */
             auto_fraction: number | null;
             /** Auto Details */
-            auto_details: Record<string, never> | null;
+            auto_details: {
+                [key: string]: unknown;
+            } | null;
             /** Manual Marks */
             manual_marks: number | null;
             /** Override Marks */
@@ -1481,7 +1649,9 @@ export interface components {
             /** Target Id */
             target_id: string;
             /** Details */
-            details: Record<string, never>;
+            details: {
+                [key: string]: unknown;
+            };
         };
         /** BatchIdsIn */
         BatchIdsIn: {
@@ -1542,6 +1712,25 @@ export interface components {
             /** Grading Pending */
             grading_pending: number;
         };
+        /** BlockedAppIn */
+        BlockedAppIn: {
+            /**
+             * Process
+             * @description Process name, e.g. WhatsApp.exe or whatsapp
+             */
+            process: string;
+            /**
+             * Label
+             * @description Shown to students: 'Close WhatsApp'
+             */
+            label: string;
+            /**
+             * Action
+             * @description strike: counts as one strike; lock: pauses the exam until a professor resumes
+             * @default strike
+             */
+            action: string;
+        };
         /** Body_add_dataset_api_v1_questions__question_id__datasets_post */
         Body_add_dataset_api_v1_questions__question_id__datasets_post: {
             /**
@@ -1570,6 +1759,19 @@ export interface components {
              * @default main
              */
             group: string;
+        };
+        /** Body_add_file_api_v1_questions__question_id__files_post */
+        Body_add_file_api_v1_questions__question_id__files_post: {
+            /**
+             * File
+             * @description A data file the student's code opens by name, e.g. marks.csv
+             */
+            file: string;
+            /**
+             * Name
+             * @description Name the code uses; default: the uploaded file's name
+             */
+            name?: string | null;
         };
         /** Body_import_users_api_v1_admin_users_import_post */
         Body_import_users_api_v1_admin_users_import_post: {
@@ -1680,7 +1882,9 @@ export interface components {
             /** Client Ts */
             client_ts?: string | null;
             /** Details */
-            details?: Record<string, never>;
+            details?: {
+                [key: string]: unknown;
+            };
         };
         /** EventOut */
         EventOut: {
@@ -1695,7 +1899,9 @@ export interface components {
             /** Source */
             source: string;
             /** Details */
-            details: Record<string, never>;
+            details: {
+                [key: string]: unknown;
+            };
             /** Client Ts */
             client_ts: string | null;
             /**
@@ -1769,11 +1975,17 @@ export interface components {
             join_window_minutes: number;
             status: components["schemas"]["ExamStatus"];
             /** Selection */
-            selection: Record<string, never>;
+            selection: {
+                [key: string]: unknown;
+            };
             /** Policy */
-            policy: Record<string, never>;
+            policy: {
+                [key: string]: unknown;
+            };
             /** Marking */
-            marking: Record<string, never>;
+            marking: {
+                [key: string]: unknown;
+            };
             /** Batch Ids */
             batch_ids: string[] | null;
             /** Languages */
@@ -1903,6 +2115,24 @@ export interface components {
             /** Batches */
             batches: components["schemas"]["BatchProgress"][];
         };
+        /** ExtendAllOut */
+        ExtendAllOut: {
+            /** Extended */
+            extended: number;
+            /** Minutes */
+            minutes: number;
+        };
+        /** ExtendIn */
+        ExtendIn: {
+            /** Minutes */
+            minutes: number;
+            /**
+             * Reason
+             * @description Shown in the student's timeline, e.g. 'laptop restarted'.
+             * @default
+             */
+            reason: string;
+        };
         /** FinishOut */
         FinishOut: {
             status: components["schemas"]["SessionStatus"];
@@ -1920,7 +2150,9 @@ export interface components {
             /** Slowest Ms */
             slowest_ms: number | null;
             /** Failures */
-            failures: Record<string, never>[];
+            failures: {
+                [key: string]: unknown;
+            }[];
         };
         /** GradeOut */
         GradeOut: {
@@ -2251,7 +2483,9 @@ export interface components {
             /** Statement Md */
             statement_md: string;
             /** Grader Config */
-            grader_config: Record<string, never>;
+            grader_config: {
+                [key: string]: unknown;
+            };
             /** Time Limit Ms */
             time_limit_ms: number | null;
             /** Auto Time Limit Ms */
@@ -2271,6 +2505,60 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** QuestionFileDetail */
+        QuestionFileDetail: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Kind */
+            kind: string;
+            /** Rows */
+            rows?: number | null;
+            /** Column Count */
+            column_count?: number | null;
+            /** Read Hint */
+            read_hint: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Meta */
+            meta: {
+                [key: string]: unknown;
+            };
+        };
+        /** QuestionFileOut */
+        QuestionFileOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Kind */
+            kind: string;
+            /** Rows */
+            rows?: number | null;
+            /** Column Count */
+            column_count?: number | null;
+            /** Read Hint */
+            read_hint: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
         /** QuestionIn */
         QuestionIn: {
             /** Title */
@@ -2286,7 +2574,9 @@ export interface components {
              */
             grader: string;
             /** Grader Config */
-            grader_config?: Record<string, never>;
+            grader_config?: {
+                [key: string]: unknown;
+            };
             /**
              * Marks
              * @default 10
@@ -2319,7 +2609,9 @@ export interface components {
             /** Grader */
             grader?: string | null;
             /** Grader Config */
-            grader_config?: Record<string, never> | null;
+            grader_config?: {
+                [key: string]: unknown;
+            } | null;
             /** Marks */
             marks?: number | null;
             /** Time Limit Ms */
@@ -2560,7 +2852,9 @@ export interface components {
             /** Code */
             code: string;
             /** Results */
-            results: Record<string, never>[];
+            results: {
+                [key: string]: unknown;
+            }[];
         };
         /** RunOut */
         RunOut: {
@@ -2698,6 +2992,8 @@ export interface components {
             questions: components["schemas"]["StudentQuestion"][];
             /** Receipts */
             receipts: components["schemas"]["Receipt"][];
+            /** Blocked Apps */
+            blocked_apps?: components["schemas"]["app__api__v1__student__BlockedAppOut"][];
         };
         /**
          * Severity
@@ -2794,6 +3090,8 @@ export interface components {
             samples: components["schemas"]["SampleOut"][];
             /** Hidden Test Count */
             hidden_test_count: number;
+            /** Files */
+            files?: components["schemas"]["QuestionFileOut"][];
             draft: components["schemas"]["DraftOut"] | null;
         };
         /** StudentResult */
@@ -2810,7 +3108,9 @@ export interface components {
             /** Max Total */
             max_total: number;
             /** Questions */
-            questions: Record<string, never>[];
+            questions: {
+                [key: string]: unknown;
+            }[];
         };
         /** SubjectIn */
         SubjectIn: {
@@ -3155,6 +3455,34 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /** BlockedAppOut */
+        app__api__v1__admin__BlockedAppOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Process */
+            process: string;
+            /** Label */
+            label: string;
+            /** Action */
+            action: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** BlockedAppOut */
+        app__api__v1__student__BlockedAppOut: {
+            /** Process */
+            process: string;
+            /** Label */
+            label: string;
+            /** Action */
+            action: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -3179,7 +3507,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
@@ -3984,6 +4314,88 @@ export interface operations {
             };
         };
     };
+    list_blocked_apps_api_v1_admin_blocked_apps_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["app__api__v1__admin__BlockedAppOut"][];
+                };
+            };
+        };
+    };
+    add_blocked_app_api_v1_admin_blocked_apps_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BlockedAppIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["app__api__v1__admin__BlockedAppOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_blocked_app_api_v1_admin_blocked_apps__app_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_audit_api_v1_admin_audit_get: {
         parameters: {
             query?: {
@@ -4031,7 +4443,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
@@ -4477,7 +4891,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -4746,6 +5162,134 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["TestOut"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_files_api_v1_questions__question_id__files_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionFileOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_file_api_v1_questions__question_id__files_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                question_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_add_file_api_v1_questions__question_id__files_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionFileDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_file_api_v1_questions__question_id__files__file_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                question_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionFileDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_file_api_v1_questions__question_id__files__file_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                question_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -5166,7 +5710,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -5337,6 +5883,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MonitorRow"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    extend_session_api_v1_exams__exam_id__sessions__session_id__extend_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exam_id: string;
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExtendIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonitorRow"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    extend_exam_api_v1_exams__exam_id__extend_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                exam_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExtendIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtendAllOut"];
                 };
             };
             /** @description Validation Error */
@@ -5641,6 +6258,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    file_preview_api_v1_student_sessions__session_id__questions__question_id__files__file_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                question_id: string;
+                file_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionFileDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    blocked_apps_api_v1_student_blocked_apps_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["app__api__v1__student__BlockedAppOut"][];
                 };
             };
         };
