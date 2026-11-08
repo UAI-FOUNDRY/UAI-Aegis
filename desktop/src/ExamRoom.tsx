@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, isApiError, Receipt, RunOut, SessionView, Status } from "./api";
 import CodeEditor from "./CodeEditor";
+import DataFiles from "./DataFiles";
 import { renderMarkdown } from "./markdown";
 import { Kind, questionKind, SampleView, TestResultView } from "./testdata";
 
@@ -103,6 +104,9 @@ export default function ExamRoom({
     initial.status === "submitted" || initial.status === "terminated" ? initial.receipts : null,
   );
   const [lastBeat, setLastBeat] = useState<{ at: Date; ok: boolean; note?: string } | null>(null);
+  // The professor moved this exam to the student's other laptop (or kept it there).
+  const [moved, setMoved] = useState(false);
+  const deadlineRef = useRef(initial.deadline_at);
 
   // Server clock minus laptop clock: the countdown follows the server (section 4).
   const offset = useRef(Date.parse(initial.server_now) - Date.now());
@@ -191,12 +195,12 @@ export default function ExamRoom({
   );
 
   useEffect(() => {
-    if (finished) return;
+    if (finished || moved) return;
     const id = window.setInterval(() => {
       for (const qid of Object.keys(answersRef.current)) saveOne(qid);
     }, AUTOSAVE_MS);
     return () => window.clearInterval(id);
-  }, [finished, saveOne]);
+  }, [finished, moved, saveOne]);
 
   // ------------------------------------------------------------------ heartbeat (section 4)
 
@@ -210,6 +214,13 @@ export default function ExamRoom({
     try {
       const s = await api.heartbeat(sid);
       offset.current = Date.parse(s.server_now) - Date.now();
+      const added = Date.parse(s.deadline_at) - Date.parse(deadlineRef.current);
+      deadlineRef.current = s.deadline_at;
+      if (added >= 30_000 && before !== "locked") {
+        const minutes = Math.round(added / 60_000);
+        setNotice(`Your professor gave you ${minutes} more minute${minutes === 1 ? "" : "s"}.`);
+        window.setTimeout(() => setNotice(null), 10_000);
+      }
       setStatus(s);
       setOffline(false);
       setLastBeat({ at: new Date(), ok: true });
@@ -223,6 +234,12 @@ export default function ExamRoom({
         setAnswers(answersRef.current);
       }
     } catch (err) {
+      if (isApiError(err) && err.code === "device_mismatch") {
+        // Final: heartbeats are accepted from a laptop still waiting for approval, so
+        // this laptop no longer holds the exam. Rust has already ended the lockdown.
+        setMoved(true);
+        return;
+      }
       handleError(err);
       setLastBeat({ at: new Date(), ok: false, note: isApiError(err) ? err.code : "error" });
     } finally {
@@ -231,7 +248,7 @@ export default function ExamRoom({
   }, [sid, endExam, handleError]);
 
   useEffect(() => {
-    if (finished) return;
+    if (finished || moved) return;
     beat();
     const id = window.setInterval(beat, HEARTBEAT_MS);
     // Coming back to the window: refresh at once so a new strike shows immediately.
@@ -241,7 +258,7 @@ export default function ExamRoom({
       window.clearInterval(id);
       window.removeEventListener("focus", onFocus);
     };
-  }, [finished, beat]);
+  }, [finished, moved, beat]);
 
   // Countdown, recomputed every second from the server deadline.
   useEffect(() => {
@@ -319,6 +336,20 @@ export default function ExamRoom({
       : "All changes saved";
   const statementHtml = useMemo(() => (q ? renderMarkdown(q.statement_md) : ""), [q]);
   const instructionsHtml = useMemo(() => renderMarkdown(view.instructions_md), [view.instructions_md]);
+
+  if (moved) {
+    return (
+      <section className="card narrow">
+        <h1>This exam is on another laptop</h1>
+        <p className="muted">{view.exam_title}</p>
+        <p>
+          Your professor moved this exam to your other laptop (or kept it there). Continue on that laptop: your saved
+          code is on the server and opens there.
+        </p>
+        <button onClick={onLeave}>Back to exams</button>
+      </section>
+    );
+  }
 
   if (finished) {
     const titles = new Map(questions.map((x) => [x.id, x.title]));
@@ -418,6 +449,7 @@ export default function ExamRoom({
               </div>
               {/* Sanitised: raw HTML off + DOMPurify (section 8) */}
               <div className="md" dangerouslySetInnerHTML={{ __html: statementHtml }} />
+              {q.files?.length > 0 && <DataFiles key={q.id} sessionId={sid} questionId={q.id} files={q.files} />}
               {q.samples.map((s) => (
                 <section key={s.ordinal} className="sample-block">
                   <h3>{kind === "checks" ? `Checks ${s.ordinal}` : `Example ${s.ordinal}`}</h3>

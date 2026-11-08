@@ -21,11 +21,22 @@ Specs: `docs/CLIENT_PROTOCOL.md` (the protocol), `backend/app/security/signing.p
   predictions), HTML and chart questions (the checklist, then a tick or cross per check).
   The server does not send the question kind yet, so it is worked out from the language and
   the samples; a `kind` or `grader` field on the question will be used as soon as it exists.
+- Data files (`src/DataFiles.tsx`): a question's datasets are listed under the statement
+  with their size and shape and how to open them (`pd.read_csv("marks.csv")`, typed, not
+  copied). Clicking one shows the first 50 rows or a column summary (type, missing,
+  distinct, min, max, mean or examples), fetched with the `file_preview` command. The
+  file itself never comes to the laptop: the code runs on the server, next to it.
 - Autosave every 5 s with `base_revision`; an AES-256-GCM encrypted local copy is written
   before every save/run/submit, so a Wi-Fi drop or crash loses nothing (resent on resume).
 - Run samples / Submit with per-test results; Finish (saves everything first) with receipts.
 - Server countdown, heartbeat every 10 s (never two at once), locked / waiting screen,
-  submitted screen.
+  submitted screen. When the professor adds time, the next heartbeat brings the new end
+  time and the student sees "Your professor gave you N more minutes".
+- Moving to another laptop: on the new laptop the exam opens paused (locked down) until
+  the professor approves; then it reloads with the saved code. On the old laptop (or a
+  rejected new one), a heartbeat answered with `device_mismatch` ends the lockdown in Rust
+  (`released_elsewhere` in `commands.rs`) and the room shows "This exam is on another
+  laptop" with a way back to the exam list.
 - Leaving the exam (`lockdown/away.rs`, `start_guard` in `lockdown/mod.rs`): the window is
   checked 20 times a second from Rust (not from JavaScript). If it loses the focus or full
   screen for more than 150 ms (shorter is a popup flicker), it is pulled straight back and
@@ -50,7 +61,10 @@ Specs: `docs/CLIENT_PROTOCOL.md` (the protocol), `backend/app/security/signing.p
   settings are kept and restored.
 - Detection before Start (the student must fix it) and every 3 s during the exam, each
   reported once: extra displays, VMs (CPUID + firmware strings), Remote Desktop session,
-  remote-control / screen-sharing / recording apps, debugger (release builds, Windows).
+  remote-control / screen-sharing / recording apps, debugger (release builds, Windows),
+  and the admins' blocked apps (chat, AI assistants...): the list comes from the server
+  with every exam view and before Start (`ServerApp` in `lockdown/detect.rs`), reported as
+  `forbidden_app_detected` (a strike) or `blocked_app_detected` (pauses the exam).
 
 - Windows: the whole app runs on its own Win32 desktop (`lockdown/secure_desktop.rs`, like Safe
   Exam Browser): no taskbar, Start menu, Alt+Tab thumbnails, gestures or other apps. The
@@ -106,7 +120,7 @@ pick "UAI Aegis Exam" on the login screen and sign in.
 
 Next: "My results" screen, `network_reconnected`, installer + code signing (Windows
 certificate, Apple Developer ID + notarisation), Apple's assessment mode once Apple grants
-the entitlement, blocked-app list from the server.
+the entitlement.
 
 ## Folder map
 

@@ -1,9 +1,10 @@
 //! What the app checks before Start and every 3 s during an exam.
 //! Each finding maps to an event kind the server knows (backend proctoring.py).
 
-use std::sync::OnceLock;
+use std::collections::BTreeSet;
+use std::sync::{OnceLock, RwLock};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 use tauri::AppHandle;
@@ -21,9 +22,43 @@ pub struct Finding {
     pub details: Value,
 }
 
+/// An app on the admins' list (chat, AI assistants...), sent by the server before Start
+/// and with every exam view (`blocked_apps`), so the list changes without an app update.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ServerApp {
+    /// Process name, lower case, without `.exe`.
+    pub process: String,
+    pub label: String,
+    /// "strike" (one strike) or "lock" (pauses the exam until a professor resumes it).
+    pub action: String,
+}
+
+static SERVER_APPS: RwLock<Vec<ServerApp>> = RwLock::new(Vec::new());
+
+/// Replace the admins' list (from the server).
+pub fn set_server_apps(apps: Vec<ServerApp>) {
+    if let Ok(mut list) = SERVER_APPS.write() {
+        *list = apps;
+    }
+}
+
+/// Findings for running apps on the admins' list. `seen` holds running process names,
+/// lower case, without `.exe`.
+pub fn server_findings(seen: &BTreeSet<String>, apps: &[ServerApp]) -> Vec<Finding> {
+    apps.iter()
+        .filter(|app| seen.contains(&app.process.to_lowercase()))
+        .map(|app| Finding {
+            kind: if app.action == "lock" { "blocked_app_detected" } else { "forbidden_app_detected" },
+            key: format!("app:{}", app.process.to_lowercase()),
+            message: format!("Close {} (check the system tray too).", app.label),
+            details: json!({"app": app.label, "process": app.process, "list": "server"}),
+        })
+        .collect()
+}
+
 /// Tools that let someone else see or control the screen, or record it.
-/// Process names, lower case, without `.exe`. A starting list: it should later come
-/// from the server so admins can change it without an app update.
+/// Process names, lower case, without `.exe`. Built in; admins add more from the portal
+/// (ServerApp above).
 const REMOTE_CONTROL: &[(&str, &str)] = &[
     ("anydesk", "AnyDesk"),
     // Linux: screen sharing servers
@@ -152,7 +187,7 @@ impl Scanner {
 
         // Running tools (names only; nothing else about the processes is read).
         self.sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
-        let mut seen = std::collections::BTreeSet::new();
+        let mut seen = BTreeSet::new();
         for p in self.sys.processes().values() {
             let name = p.name().to_string_lossy().to_lowercase();
             let name = name.strip_suffix(".exe").unwrap_or(&name).to_string();
@@ -171,6 +206,13 @@ impl Scanner {
                         message: format!("Close {label} (check the system tray too)."),
                         details: json!({"app": label, "process": proc_name}),
                     });
+                }
+            }
+        }
+        if let Ok(apps) = SERVER_APPS.read() {
+            for finding in server_findings(&seen, &apps) {
+                if !out.iter().any(|f| f.key == finding.key) {
+                    out.push(finding);
                 }
             }
         }
@@ -269,4 +311,32 @@ fn firmware_strings() -> Option<String> {
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn firmware_strings() -> Option<String> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app(process: &str, action: &str) -> ServerApp {
+        ServerApp { process: process.into(), label: process.to_uppercase(), action: action.into() }
+    }
+
+    #[test]
+    fn running_apps_on_the_admins_list_are_found_with_the_right_kind() {
+        let seen: BTreeSet<String> = ["explorer", "whatsapp", "chatgpt", "code"].iter().map(|s| s.to_string()).collect();
+        let apps = [app("whatsapp", "strike"), app("ChatGPT", "lock"), app("discord", "strike")];
+        let found = server_findings(&seen, &apps);
+        assert_eq!(found.len(), 2);
+        assert_eq!((found[0].kind, found[0].key.as_str()), ("forbidden_app_detected", "app:whatsapp"));
+        assert_eq!((found[1].kind, found[1].key.as_str()), ("blocked_app_detected", "app:chatgpt"));
+        assert_eq!(found[0].message, "Close WHATSAPP (check the system tray too).");
+        assert!(server_findings(&seen, &[]).is_empty());
+    }
+
+    #[test]
+    fn the_server_list_parses_from_the_exam_view() {
+        let view = serde_json::json!({"blocked_apps": [{"process": "telegram", "label": "Telegram", "action": "strike"}]});
+        let apps: Vec<ServerApp> = serde_json::from_value(view["blocked_apps"].clone()).unwrap();
+        assert_eq!(apps, vec![ServerApp { process: "telegram".into(), label: "Telegram".into(), action: "strike".into() }]);
+    }
 }

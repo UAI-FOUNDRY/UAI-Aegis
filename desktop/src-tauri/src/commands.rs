@@ -80,6 +80,16 @@ impl AppState {
         }
     }
 
+    /// The server says this laptop no longer holds the session: the professor moved the
+    /// exam to the student's new laptop, or kept it on the old one. Heartbeats, events and
+    /// session reloads are accepted from a laptop still waiting for approval, so this
+    /// answer to one of them is final: the lockdown on this laptop ends.
+    fn released_elsewhere<T>(&self, session_id: &str, result: &Result<T, ApiError>) {
+        if matches!(result, Err(e) if e.code == "device_mismatch") && self.active().as_deref() == Some(session_id) {
+            self.set_active(None);
+        }
+    }
+
     fn with_drafts<T>(&self, f: impl FnOnce(&DraftStore) -> T) -> Option<T> {
         self.drafts.lock().unwrap().as_ref().map(f)
     }
@@ -199,9 +209,18 @@ async fn signed(state: &AppState, method: Method, path: &str, body: Option<Value
 /// POST .../events (section 5). Kinds are chosen here in Rust, never passed in from JS.
 pub(crate) async fn report_event(state: &AppState, session_id: &str, kind: &str, details: Value) -> Result<Value, ApiError> {
     let body = json!({"events": [{"kind": kind, "client_ts": now_iso(), "details": details}]});
-    let reply = signed(state, Method::POST, &format!("/api/v1/student/sessions/{session_id}/events"), Some(body)).await?;
+    let result = signed(state, Method::POST, &format!("/api/v1/student/sessions/{session_id}/events"), Some(body)).await;
+    state.released_elsewhere(session_id, &result);
+    let reply = result?;
     state.track(session_id, &reply);
     Ok(reply)
+}
+
+/// The admins' blocked-app list from an exam view (or from GET /student/blocked-apps).
+fn update_blocked_apps(list: &Value) {
+    if let Ok(apps) = serde_json::from_value::<Vec<crate::lockdown::detect::ServerApp>>(list.clone()) {
+        crate::lockdown::detect::set_server_apps(apps);
+    }
 }
 
 /// Called from the window event handler in lib.rs (development log only). A lost focus
@@ -302,6 +321,7 @@ pub async fn start_exam(
     });
     let mut view = signed(&state, Method::POST, &format!("/api/v1/student/exams/{exam_id}/start"), Some(body)).await?;
     let session_id = view["session_id"].as_str().unwrap_or_default().to_string();
+    update_blocked_apps(&view["blocked_apps"]);
     state.track(&session_id, &view);
 
     // Started more than 20 s ago by the server's clock = this is a relaunch, not a new start.
@@ -325,10 +345,23 @@ pub async fn start_exam(
 #[tauri::command]
 pub async fn get_session(state: State<'_, AppState>, session_id: String) -> Result<Value, ApiError> {
     let sid = uuid_arg(&session_id)?;
-    let mut view = signed(&state, Method::GET, &format!("/api/v1/student/sessions/{sid}"), None).await?;
+    let result = signed(&state, Method::GET, &format!("/api/v1/student/sessions/{sid}"), None).await;
+    state.released_elsewhere(&sid, &result);
+    let mut view = result?;
+    update_blocked_apps(&view["blocked_apps"]);
     state.track(&sid, &view);
     merge_local_drafts(&state, &mut view);
     Ok(view)
+}
+
+/// GET .../questions/{qid}/files/{fid} (signed): a data file's column summary and
+/// first rows, for the viewer in the exam room. The file itself never comes to the
+/// laptop: the student's code reads it on the server, where it runs.
+#[tauri::command]
+pub async fn file_preview(state: State<'_, AppState>, session_id: String, question_id: String, file_id: String)
+    -> Result<Value, ApiError> {
+    let (sid, qid, fid) = (uuid_arg(&session_id)?, uuid_arg(&question_id)?, uuid_arg(&file_id)?);
+    signed(&state, Method::GET, &format!("/api/v1/student/sessions/{sid}/questions/{qid}/files/{fid}"), None).await
 }
 
 /// PUT /student/sessions/{id}/answers/{qid} (signed). Autosave: the local encrypted copy
@@ -405,7 +438,9 @@ pub async fn heartbeat(
         "displays": displays,
         "client_version": CLIENT_VERSION,
     });
-    let reply = signed(&state, Method::POST, &format!("/api/v1/student/sessions/{sid}/heartbeat"), Some(body)).await?;
+    let result = signed(&state, Method::POST, &format!("/api/v1/student/sessions/{sid}/heartbeat"), Some(body)).await;
+    state.released_elsewhere(&sid, &result);
+    let reply = result?;
     state.track(&sid, &reply);
     Ok(reply)
 }
@@ -428,9 +463,14 @@ pub struct PrecheckResult {
 /// Before Start: the same checks the exam loop runs, so the student can fix things
 /// (unplug a screen, close AnyDesk) before anything is reported.
 #[tauri::command]
-pub async fn precheck(app: AppHandle) -> Result<PrecheckResult, ApiError> {
+pub async fn precheck(app: AppHandle, state: State<'_, AppState>) -> Result<PrecheckResult, ApiError> {
     if crate::lockdown::disabled_for_dev() {
         return Ok(PrecheckResult { ok: true, problems: vec![] });
+    }
+    // The admins' current blocked-app list (keep the last one if offline).
+    let client = state.client.lock().await.clone();
+    if let Ok(list) = client.get("/api/v1/student/blocked-apps").await {
+        update_blocked_apps(&list);
     }
     // macOS: show the system's "allow in Accessibility" prompt the first time.
     #[cfg(target_os = "macos")]

@@ -201,3 +201,24 @@ select {
   padding: 1rem; z-index: 10;
 }
 .modal { margin: 0; width: 100%; }
+
+/* Data files that come with a question (DataFiles.tsx) */
+.datafiles { margin: 0.8rem 0; }
+.datafiles ul { list-style: none; padding: 0; margin: 0.4rem 0 0; display: grid; grid-template-columns: minmax(0, 1fr);
+  gap: 0.5rem; }
+/* min-width 0: a wide table scrolls inside the card instead of stretching it past the panel */
+.datafiles li { border: 1px solid var(--line); border-radius: 6px; padding: 0.5rem 0.6rem; min-width: 0; }
+.fileitem { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; align-items: baseline; justify-content: space-between; width: 100%;
+  background: none; border: none; padding: 0; text-align: left; cursor: pointer; color: var(--text); }
+.fileitem .filename { font-family: ui-monospace, Consolas, monospace; font-weight: 600; }
+.fileitem.on .filename { text-decoration: underline; }
+.readhint { display: inline-block; margin-top: 0.3rem; font-size: 0.82rem; color: var(--muted);
+  user-select: none; -webkit-user-select: none; } /* typed, not copied: pastes from outside the editor are refused */
+.filedetail { margin-top: 0.5rem; }
+.filedetail .tabs { display: flex; gap: 0.3rem; margin-bottom: 0.3rem; }
+.filedetail .tabs button { font-size: 0.82rem; padding: 0.15rem 0.6rem; background: transparent; color: var(--accent);
+  border: 1px solid var(--line); font-weight: 500; }
+.filedetail .tabs button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.filetext { max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 0.5rem;
+  font-size: 0.82rem; white-space: pre; }
+.datatable td.warn { color: var(--danger); }

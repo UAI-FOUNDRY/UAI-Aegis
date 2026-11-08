@@ -71,6 +71,47 @@ export type Question = {
   samples: { ordinal: number; input: string; expected_output: string }[];
   hidden_test_count: number;
   draft: Draft | null;
+  /** Data files the code opens by name (e.g. marks.csv). */
+  files: DataFile[];
+};
+
+export type DataFile = {
+  id: string;
+  name: string;
+  size_bytes: number;
+  kind: "table" | "text" | "binary";
+  rows: number | null;
+  column_count: number | null;
+  /** e.g. pd.read_csv("marks.csv") */
+  read_hint: string;
+};
+
+export type ColumnSummary = {
+  name: string;
+  type: "number" | "text" | "empty";
+  filled: number;
+  missing: number;
+  /** Distinct values; null = more than 1000. */
+  distinct: number | null;
+  min?: number;
+  max?: number;
+  mean?: number;
+  examples?: string[];
+};
+
+export type DataFileDetail = DataFile & {
+  meta: {
+    // tables (CSV/TSV)
+    rows?: number;
+    column_count?: number;
+    columns?: ColumnSummary[];
+    header?: string[];
+    stats_rows?: number;
+    // text files
+    lines?: number;
+    /** Tables: first rows; text files: first characters. */
+    preview?: string[][] | string;
+  };
 };
 
 export type Draft = {
@@ -132,6 +173,8 @@ export const api = {
   startExam: (examId: string, accessCode: string | null) =>
     invoke<SessionView>("start_exam", { examId, accessCode }),
   getSession: (sessionId: string) => invoke<SessionView>("get_session", { sessionId }),
+  filePreview: (sessionId: string, questionId: string, fileId: string) =>
+    invoke<DataFileDetail>("file_preview", { sessionId, questionId, fileId }),
   heartbeat: (sessionId: string) => invoke<Status>("heartbeat", { sessionId }),
   saveAnswer: (sessionId: string, questionId: string, language: string, code: string, baseRevision: number | null) =>
     invoke<{ revision: number; saved_at: string }>("save_answer", {

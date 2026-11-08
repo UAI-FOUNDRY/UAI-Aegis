@@ -69,6 +69,7 @@ pub fn run() {
             commands::list_exams,
             commands::start_exam,
             commands::get_session,
+            commands::file_preview,
             commands::save_answer,
             commands::run_code,
             commands::submit_code,
