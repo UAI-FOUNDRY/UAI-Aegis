@@ -51,7 +51,7 @@ from ...services.exams import (
     languages_for_question,
     load_tests,
 )
-from ...services.live import notify
+from ...services.live import RESYNC, notify
 from ...services.proctoring import ExamPolicy, effective_policy, lock
 from ...state import AppState
 from ..deps import get_db, get_state, require_professor
@@ -218,6 +218,16 @@ class ResumeIn(BaseModel):
 
 class TerminateIn(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
+
+
+class ExtendIn(BaseModel):
+    minutes: int = Field(ge=1, le=240)
+    reason: str = Field("", max_length=200, description="Shown in the student's timeline, e.g. 'laptop restarted'.")
+
+
+class ExtendAllOut(BaseModel):
+    extended: int  # sessions that got the extra time
+    minutes: int
 
 
 class MarksIn(BaseModel):
@@ -837,6 +847,49 @@ async def resume_session(exam_id: uuid.UUID, session_id: uuid.UUID, body: Resume
     await db.commit()
     await notify(state, exam.id, "resumed", session.id)
     return await monitor_row(db, exam, session)
+
+
+@router.post("/exams/{exam_id}/sessions/{session_id}/extend", response_model=MonitorRow)
+async def extend_session(exam_id: uuid.UUID, session_id: uuid.UUID, body: ExtendIn,
+                         state: AppState = Depends(get_state), db: AsyncSession = Depends(get_db),
+                         user: User = Depends(require_professor)):
+    """Give one student extra time (working or paused): e.g. their laptop failed, they
+    lost time moving to another one, or they have an accommodation. Their app picks up
+    the new end time within seconds."""
+    exam, _ = await _exam_for(db, user, exam_id, Cap.proctor)
+    session = await _session_in_exam(db, exam, session_id, for_update=True)
+    if exam.status != ExamStatus.live:
+        raise conflict("exam_not_live", "The exam is closed.")
+    if session.status not in (SessionStatus.active, SessionStatus.locked):
+        raise conflict("session_finished", "This student has already finished; time can't be added.")
+    session.deadline_at = session.deadline_at + timedelta(minutes=body.minutes)
+    details = {"by": user.email, "extra_minutes": body.minutes, "reason": body.reason}
+    db.add(_staff_event(session, "staff_extend", details))
+    await _record(db, state, user, "session.extended", "exam_session", session.id, details)
+    await db.commit()
+    await notify(state, exam.id, "extended", session.id)
+    return await monitor_row(db, exam, session)
+
+
+@router.post("/exams/{exam_id}/extend", response_model=ExtendAllOut)
+async def extend_exam(exam_id: uuid.UUID, body: ExtendIn, state: AppState = Depends(get_state),
+                      db: AsyncSession = Depends(get_db), user: User = Depends(require_professor)):
+    """Give everyone who is still working (or paused) extra time, e.g. after a power cut
+    or a network outage in the lab. Students who start later get the full duration anyway."""
+    exam, _ = await _exam_for(db, user, exam_id, Cap.proctor)
+    if exam.status != ExamStatus.live:
+        raise conflict("exam_not_live", "The exam is closed.")
+    sessions = (await db.scalars(select(ExamSession).where(
+        ExamSession.exam_id == exam.id,
+        ExamSession.status.in_((SessionStatus.active, SessionStatus.locked))).with_for_update())).all()
+    details = {"by": user.email, "extra_minutes": body.minutes, "reason": body.reason, "whole_exam": True}
+    for session in sessions:
+        session.deadline_at = session.deadline_at + timedelta(minutes=body.minutes)
+        db.add(_staff_event(session, "staff_extend", details))
+    await _record(db, state, user, "exam.extended", "exam", exam.id, {**details, "sessions": len(sessions)})
+    await db.commit()
+    await notify(state, exam.id, RESYNC)
+    return ExtendAllOut(extended=len(sessions), minutes=body.minutes)
 
 
 @router.post("/exams/{exam_id}/sessions/{session_id}/terminate", response_model=MonitorRow)

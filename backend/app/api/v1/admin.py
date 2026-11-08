@@ -1,4 +1,5 @@
-"""Admin: departments, users (incl. CSV import), batches, languages, app releases, audit.
+"""Admin: departments, users (incl. CSV import), batches, languages, app releases,
+blocked apps, audit.
 
 Admins manage the organisation but cannot see question pools or student answers.
 Every change here is written to the tamper-evident audit log.
@@ -22,6 +23,7 @@ from ...models import (
     AuthSession,
     Batch,
     BatchMember,
+    BlockedApp,
     ClientRelease,
     Department,
     Exam,
@@ -601,6 +603,64 @@ async def set_release_status(release_id: uuid.UUID, body: ReleaseStatusIn, state
     await _record(db, state, admin, "client_release.status", "client_release", release.id, {"status": body.status})
     await db.commit()
     return release
+
+
+# ----------------------------------------------------------------------- blocked apps
+
+
+class BlockedAppIn(BaseModel):
+    process: str = Field(min_length=1, max_length=68, description="Process name, e.g. WhatsApp.exe or whatsapp")
+    label: str = Field(min_length=1, max_length=80, description="Shown to students: 'Close WhatsApp'")
+    action: str = Field("strike", pattern=r"^(strike|lock)$",
+                        description="strike: counts as one strike; lock: pauses the exam until a professor resumes")
+
+    @field_validator("process")
+    @classmethod
+    def _process(cls, value: str) -> str:
+        name = value.strip().lower()
+        name = name.removesuffix(".exe").removesuffix(".app")
+        if not name or len(name) > 64 or any(c in name for c in "/\\\0"):
+            raise ValueError("a process name such as 'whatsapp' (no folders)")
+        return name
+
+
+class BlockedAppOut(ORM):
+    id: uuid.UUID
+    process: str
+    label: str
+    action: str
+    created_at: datetime
+
+
+@router.get("/blocked-apps", response_model=list[BlockedAppOut], dependencies=[Depends(require_admin)])
+async def list_blocked_apps(db: AsyncSession = Depends(get_db)):
+    return (await db.scalars(select(BlockedApp).order_by(BlockedApp.process))).all()
+
+
+@router.post("/blocked-apps", response_model=BlockedAppOut, status_code=201)
+async def add_blocked_app(body: BlockedAppIn, state: AppState = Depends(get_state),
+                          db: AsyncSession = Depends(get_db), admin: User = Depends(require_admin)):
+    """Students' apps check for it before Start and every few seconds during an exam,
+    from their next exam on (no app update needed)."""
+    if await db.scalar(select(BlockedApp).where(BlockedApp.process == body.process)):
+        raise conflict("already_blocked", f"'{body.process}' is already on the list.")
+    app = BlockedApp(id=uuid.uuid4(), process=body.process, label=body.label.strip(), action=body.action,
+                     created_by=admin.id)
+    db.add(app)
+    await _record(db, state, admin, "blocked_app.added", "blocked_app", app.id, body.model_dump())
+    await db.commit()
+    return app
+
+
+@router.delete("/blocked-apps/{app_id}", status_code=204, response_model=None)
+async def remove_blocked_app(app_id: uuid.UUID, state: AppState = Depends(get_state),
+                             db: AsyncSession = Depends(get_db), admin: User = Depends(require_admin)):
+    app = await db.get(BlockedApp, app_id)
+    if app is None:
+        raise not_found()
+    await db.delete(app)
+    await _record(db, state, admin, "blocked_app.removed", "blocked_app", app.id, {"process": app.process})
+    await db.commit()
 
 
 # --------------------------------------------------------------------------------- audit

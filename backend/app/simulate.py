@@ -25,6 +25,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -35,9 +36,13 @@ from .security.signing import DeviceSigner
 from .seed import _FUNC_REFERENCE, _ML_REFERENCE, _REFERENCE, _SQL_REFERENCE, DEMO_PASSWORD
 
 KEY_DIR = Path(".aegis-sim")  # demo students' device keys, reused between runs
+# A dataset attached to the Python lab's question (data files, services/files.py)
+SIM_FILE = "sim_marks.csv"
+SIM_CSV = b"name,mark\nravi,78\nasha,91\nmeera,64\n"
 
 LABS = {
-    "python": dict(subject="DEMO-LAB-101", language="python3", good=_REFERENCE, wrong="print(0)\n"),
+    "python": dict(subject="DEMO-LAB-101", language="python3", good=_REFERENCE, wrong="print(0)\n",
+                   data_file=True),
     "sql": dict(subject="DEMO-DBMS-LAB", language="sql", good=_SQL_REFERENCE,
                 wrong="SELECT name, 'x' FROM employees;"),
     "ml": dict(subject="DEMO-ML-LAB", language="python3-ml", good=_ML_REFERENCE,
@@ -171,6 +176,8 @@ class Sim:
             raise SimulationFailed(f"subject {lab['subject']} not found; run `python -m app.cli demo-data` first")
         subject = subjects[lab["subject"]]
         questions = [q["id"] for q in self.call("GET", f"/api/v1/subjects/{subject['id']}/questions", prof)]
+        if lab.get("data_file"):
+            self._attach_data_file(questions[0], prof)
         exam = self.call("POST", f"/api/v1/subjects/{subject['id']}/exams", prof, {
             "title": f"Simulated {name} practical {time.strftime('%H:%M:%S')}", "duration_minutes": 30,
             "question_ids": questions, "selection": {"mode": "fixed"}, "languages": [lab["language"]],
@@ -186,6 +193,31 @@ class Sim:
             self._run_exam(lab, exam_id, code, prof, live)
         finally:
             live.close()
+
+    def _attach_data_file(self, question_id: str, prof: dict) -> None:
+        """A dataset on the question, as a professor would upload it (kept between runs)."""
+        files = self.call("GET", f"/api/v1/questions/{question_id}/files", prof)
+        if any(f["name"] == SIM_FILE for f in files):
+            return
+        r = self.http.post(f"/api/v1/questions/{question_id}/files", headers=prof,
+                           files={"file": (SIM_FILE, SIM_CSV, "text/csv")})
+        self.check(r.status_code == 201 and r.json()["rows"] == 3, "professor attached a data file (3 rows)", r.text[:200])
+
+    def _check_data_file(self, s: Student, base: str, question: dict, language: str) -> None:
+        names = [f["name"] for f in question.get("files", [])]
+        self.check(SIM_FILE in names, f"the student sees the data file {SIM_FILE}", str(names))
+        if SIM_FILE not in names:
+            return
+        f = next(f for f in question["files"] if f["name"] == SIM_FILE)
+        r = self.signed(s, "GET", f"{base}/questions/{question['id']}/files/{f['id']}")
+        preview = r.json().get("meta", {}) if r.status_code == 200 else {}
+        self.check(preview.get("rows") == 3 and len(preview.get("columns", [])) == 2,
+                   "the student previews it (rows and column summary)", r.text[:200])
+        reader = ("import csv\nrows = list(csv.DictReader(open('sim_marks.csv')))\n"
+                  "print(max(rows, key=lambda r: int(r['mark']))['name'])\n")
+        r = self.signed(s, "POST", f"{base}/answers/{question['id']}/run", {"language": language, "code": reader})
+        out = r.json()["tests"][0].get("stdout", "").strip() if r.status_code == 200 else r.text[:200]
+        self.check(out == "asha", "the student's code opened the data file by name", out)
 
     def _run_exam(self, lab: dict, exam_id: str, code: str, prof: dict, live: LiveWatch) -> None:
         self.check(live.wait_for(lambda m: m["type"] == "snapshot") is not None,
@@ -204,6 +236,8 @@ class Sim:
         self.check(not question["starter_code"], "the code editor starts empty", str(question["starter_code"]))
         self.check(live.wait_for(lambda m: m["type"] == "row" and m["data"]["student"]["email"] == s1.email) is not None,
                    "live monitor showed student 1 starting")
+        if lab.get("data_file"):
+            self._check_data_file(s1, f"/api/v1/student/sessions/{view['session_id']}", question, lab["language"])
         sessions = {s1.email: view["session_id"]}
         for s in (s2, s3):
             sessions[s.email] = self.signed(s, "POST", start, {"access_code": code}).json()["session_id"]
@@ -242,6 +276,12 @@ class Sim:
         self.call("POST", f"/api/v1/exams/{exam_id}/sessions/{sessions[s2.email]}/resume", prof, {"extra_minutes": 5})
         r = self.signed(s2, "PUT", f"{base(s2)}/{answer}", {"language": lab["language"], "code": lab["wrong"]})
         self.check(r.status_code == 200, "professor resumed student 2 (+5 min) and they can save again")
+        before = self.signed(s2, "POST", f"{base(s2)}/heartbeat", {}).json()["deadline_at"]
+        self.call("POST", f"/api/v1/exams/{exam_id}/sessions/{sessions[s2.email]}/extend", prof,
+                  {"minutes": 10, "reason": "simulated laptop restart"})
+        after = self.signed(s2, "POST", f"{base(s2)}/heartbeat", {}).json()["deadline_at"]
+        gained = (datetime.fromisoformat(after) - datetime.fromisoformat(before)).total_seconds()
+        self.check(gained == 600, "professor gave student 2 ten more minutes; their app sees the new end time")
         self.signed(s2, "POST", f"{base(s2)}/finish")
 
         # Student 3: severe event -> lock -> terminated

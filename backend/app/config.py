@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import ipaddress
 from functools import cached_property
 from pathlib import Path
 from typing import Literal
@@ -43,7 +44,13 @@ class Settings(BaseSettings):
     allowed_email_domains: str = ""  # comma-separated, e.g. "uai.edu.in"; empty = any domain
     cors_origins: str = ""  # comma-separated origins of the professor portal
     login_attempts_per_email: int = 10  # failed attempts per 15 minutes
-    login_attempts_per_ip: int = 30  # failed attempts per 15 minutes
+    # Failed attempts per 15 minutes from one address. A whole lab usually reaches the
+    # server through one campus address, so this is set well above a lab's typos; the
+    # per-email limit is what protects each account.
+    login_attempts_per_ip: int = 300
+    # Campus networks (comma-separated CIDRs, e.g. "10.0.0.0/8") where only the per-email
+    # limit applies. Needs the real client address (proxy settings, docs/SECURITY.md).
+    login_ip_exempt_networks: str = ""
 
     # Student app (desktop) security
     signature_max_skew_seconds: int = 120
@@ -72,6 +79,16 @@ class Settings(BaseSettings):
     max_code_bytes: int = 64 * 1024
     max_test_bytes: int = 2 * 1024 * 1024
     max_body_bytes: int = 8 * 1024 * 1024
+
+    # Question data files (datasets the student's code opens by name, services/files.py)
+    data_files_dir: str = "./data-files"  # on the API server; back it up with the database
+    # The same folder as Judge0's sandboxes see it: a read-only volume (judge/README.md).
+    judge0_data_dir: str = "/usr/share/aegis-data"
+    max_data_file_bytes: int = 200 * 1024 * 1024
+    max_data_files_per_question: int = 10
+    # Judge0 runs Python with the files linked from judge0_data_dir (any size); other
+    # languages get them inside each submission, so they must stay small.
+    judge0_inline_files_max_bytes: int = 4 * 1024 * 1024
 
     # Live monitor (WebSocket push to the professor portal)
     live_ticket_seconds: int = 30  # a ticket must be used within this time, once
@@ -127,6 +144,11 @@ class Settings(BaseSettings):
                 # base interpreter, and following it would run Python without the venv's libraries.
                 return str(candidate.absolute())
         return None
+
+    @property
+    def login_exempt_networks(self) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+        return [ipaddress.ip_network(n.strip(), strict=False)
+                for n in self.login_ip_exempt_networks.split(",") if n.strip()]
 
     @property
     def cors_origin_list(self) -> list[str]:

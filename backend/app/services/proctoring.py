@@ -28,6 +28,7 @@ DEFAULT_SEVERITY: dict[str, Severity] = {
     "fullscreen_exited": Severity.minor,
     "app_restarted": Severity.minor,
     "clipboard_external_paste": Severity.minor,
+    "forbidden_app_detected": Severity.minor,  # an app on the admins' list (chat, AI...) was running
     # Blocked by the app itself, recorded for context only
     "paste_blocked": Severity.info,
     "shortcut_blocked": Severity.info,

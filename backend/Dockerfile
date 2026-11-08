@@ -5,7 +5,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
-RUN useradd --create-home --uid 10001 aegis
+RUN useradd --create-home --uid 10001 aegis \
+    && mkdir -p /srv/aegis-data && chown aegis /srv/aegis-data
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY . .

@@ -7,6 +7,7 @@ the system changes when it arrives.
 
 from __future__ import annotations
 
+import ipaddress
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request
@@ -48,6 +49,14 @@ class ChangePasswordIn(BaseModel):
     new_password: str = Field(min_length=1, max_length=256)
 
 
+def _exempt(ip: str, settings) -> bool:
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(address in network for network in settings.login_exempt_networks)
+
+
 @router.post("/login", response_model=LoginOut)
 async def login(
     body: LoginIn,
@@ -58,8 +67,11 @@ async def login(
     settings = state.settings
     ip = client_ip(request)
     # Only failed attempts count, so students whose app restarts are never locked out.
-    ip_key, email_key = f"login-fail:ip:{ip}", f"login-fail:email:{body.email}"
-    if await state.limiter.is_blocked(ip_key, settings.login_attempts_per_ip, 900) or \
+    # A lab shares one address: on campus networks only the per-email limit applies, so a
+    # few students' typos never lock the whole lab out.
+    ip_key = None if _exempt(ip, settings) else f"login-fail:ip:{ip}"
+    email_key = f"login-fail:email:{body.email}"
+    if (ip_key and await state.limiter.is_blocked(ip_key, settings.login_attempts_per_ip, 900)) or \
             await state.limiter.is_blocked(email_key, settings.login_attempts_per_email, 900):
         raise too_many("Too many failed sign-in attempts. Wait 15 minutes and try again.")
 
@@ -67,7 +79,8 @@ async def login(
     # verify_password runs even for unknown emails, so timing does not reveal which exist.
     valid = await verify_password_async(state.password_slots, user.password_hash if user else None, body.password)
     if not valid or user is None or not user.is_active:
-        await state.limiter.hit(ip_key, settings.login_attempts_per_ip, 900)
+        if ip_key:
+            await state.limiter.hit(ip_key, settings.login_attempts_per_ip, 900)
         await state.limiter.hit(email_key, settings.login_attempts_per_email, 900)
         raise unauthorized("Wrong email or password.", code="invalid_credentials")
     if needs_rehash(user.password_hash):

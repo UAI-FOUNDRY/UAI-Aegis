@@ -13,13 +13,17 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import io
 import math
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import zipfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
@@ -33,6 +37,7 @@ except ImportError:  # Windows
     resource = None  # type: ignore[assignment]
 
 OUTPUT_CAP_BYTES = 1024 * 1024  # stop collecting output past 1 MiB
+PYTHON_KEYS = frozenset({"python3", "python", "python3-ml"})
 
 
 class ExecStatus(StrEnum):
@@ -45,6 +50,16 @@ class ExecStatus(StrEnum):
 
 
 @dataclass(frozen=True)
+class DataFile:
+    """A question data file the program can open by ``name`` (services/files.py)."""
+
+    name: str
+    key: str  # random storage name
+    path: str  # where it is on the API server
+    size: int
+
+
+@dataclass(frozen=True)
 class ExecRequest:
     language_key: str
     judge0_id: int
@@ -53,6 +68,7 @@ class ExecRequest:
     stdin: str
     time_limit_ms: int
     memory_limit_kb: int
+    files: tuple[DataFile, ...] = ()
 
 
 @dataclass
@@ -91,6 +107,45 @@ def _unb64(value: str | None) -> str:
     return base64.b64decode(value).decode("utf-8", errors="replace")
 
 
+def _zip_b64(files: tuple[DataFile, ...]) -> str:
+    """Judge0 ``additional_files``: a zip it unpacks next to the program before running."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for f in files:
+            archive.write(f.path, f.name)
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def _python_with_links(source: str, file_name: str, files: tuple[DataFile, ...], data_dir: str) -> str:
+    """Big files are not sent with each run: the Judge0 workers see the data folder
+    read-only (judge/README.md). This puts a link to each file next to the program, then
+    runs the student's code unchanged. The program file is first overwritten with the
+    student's code, so error messages (which read the file) show their own lines."""
+    links = [(f.name, f"{data_dir.rstrip('/')}/{f.key}") for f in files]
+    lines = [
+        "import os as _aegis_os",
+        f"for _aegis_n, _aegis_p in {links!r}:",
+        "    if not _aegis_os.path.lexists(_aegis_n):",
+        "        _aegis_os.symlink(_aegis_p, _aegis_n)",
+        f"_aegis_source = {source!r}",
+        f"with open({file_name!r}, 'w', encoding='utf-8') as _aegis_f:",
+        "    _aegis_f.write(_aegis_source)",
+        "del _aegis_os, _aegis_n, _aegis_p, _aegis_f",
+        f"exec(compile(_aegis_source, {file_name!r}, 'exec'),"
+        f" {{'__name__': '__main__', '__file__': {file_name!r}, '__builtins__': __builtins__}})",
+    ]
+    assert len(lines) == _WRAPPER_EXEC_LINE
+    return "\n".join(lines) + "\n"
+
+
+# The wrapper's own traceback frame (always the first one, at its exec line), removed
+# from what students see. Python 3.11+ may add a line of ~^ markers under it.
+_WRAPPER_EXEC_LINE = 9
+_WRAPPER_FRAME = re.compile(
+    r'(Traceback \(most recent call last\):\n)  File "[^"\n]*", line ' + str(_WRAPPER_EXEC_LINE)
+    + r', in <module>\n(?:    .*\n)?(?:[ \t]*[~^]+[ \t~^]*\n)?')
+
+
 class Judge0Executor(Executor):
     def __init__(
         self,
@@ -101,8 +156,12 @@ class Judge0Executor(Executor):
         poll_interval: float = 0.5,
         timeout: float = 90.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        data_dir: str = "/usr/share/aegis-data",
+        inline_files_max_bytes: int = 1024 * 1024,
     ) -> None:
         headers = {"X-Auth-Token": token} if token else {}
+        self._data_dir = data_dir
+        self._inline_max = inline_files_max_bytes
         self._client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"), headers=headers, timeout=30.0, transport=transport
         )
@@ -127,24 +186,44 @@ class Judge0Executor(Executor):
                     )
         return results
 
-    async def _run_chunk(self, chunk: list[ExecRequest]) -> list[ExecResult]:
-        payload = {
-            "submissions": [
-                {
-                    "source_code": _b64(r.source),
-                    "language_id": r.judge0_id,
-                    "stdin": _b64(r.stdin),
-                    "cpu_time_limit": r.time_limit_ms / 1000,
-                    "wall_time_limit": min(r.time_limit_ms * 3 / 1000, 20),
-                    "memory_limit": r.memory_limit_kb,
-                }
-                for r in chunk
-            ]
+    def _submission(self, r: ExecRequest) -> dict:
+        """One Judge0 submission. Data files: small ones travel inside the submission
+        (any language); bigger ones are linked from the shared data folder (Python)."""
+        source = r.source
+        sub: dict = {
+            "language_id": r.judge0_id,
+            "stdin": _b64(r.stdin),
+            "cpu_time_limit": r.time_limit_ms / 1000,
+            "wall_time_limit": min(r.time_limit_ms * 3 / 1000, 20),
+            "memory_limit": r.memory_limit_kb,
         }
-        resp = await self._client.post("/submissions/batch", params={"base64_encoded": "true"}, json=payload)
-        resp.raise_for_status()
-        created = resp.json()
-        tokens: list[str | None] = [item.get("token") for item in created]
+        if r.files:
+            if sum(f.size for f in r.files) <= self._inline_max:
+                sub["additional_files"] = _zip_b64(r.files)
+            elif r.language_key in PYTHON_KEYS:
+                source = _python_with_links(r.source, r.file_name, r.files, self._data_dir)
+            else:
+                limit = self._inline_max // (1024 * 1024) or 1
+                raise ValueError(f"data files over {limit} MB can only be used from Python on this server")
+        sub["source_code"] = _b64(source)
+        return sub
+
+    async def _run_chunk(self, chunk: list[ExecRequest]) -> list[ExecResult]:
+        submissions, refused = [], {}
+        for i, r in enumerate(chunk):
+            try:
+                submissions.append(self._submission(r))
+            except (ValueError, OSError) as exc:
+                refused[i] = ExecResult(ExecStatus.internal_error, message=str(exc))
+        tokens: list[str | None] = []
+        if submissions:
+            resp = await self._client.post("/submissions/batch", params={"base64_encoded": "true"},
+                                           json={"submissions": submissions})
+            resp.raise_for_status()
+            created = iter(resp.json())
+            tokens = [None if i in refused else next(created).get("token") for i in range(len(chunk))]
+        else:
+            tokens = [None] * len(chunk)
 
         pending = {t for t in tokens if t}
         found: dict[str, dict] = {}
@@ -162,8 +241,10 @@ class Judge0Executor(Executor):
                     pending.discard(sub["token"])
 
         results = []
-        for req, token in zip(chunk, tokens, strict=True):
-            if token is None:
+        for i, (req, token) in enumerate(zip(chunk, tokens, strict=True)):
+            if i in refused:
+                results.append(refused[i])
+            elif token is None:
                 results.append(ExecResult(ExecStatus.internal_error, message="judge rejected the submission"))
             elif token not in found:
                 results.append(ExecResult(ExecStatus.internal_error, message="judge timed out"))
@@ -176,10 +257,13 @@ class Judge0Executor(Executor):
         status_id = sub["status"]["id"]
         time_ms = int(float(sub["time"]) * 1000) if sub.get("time") else None
         memory_kb = int(sub["memory"]) if sub.get("memory") else None
+        stderr = _unb64(sub.get("stderr"))
+        if req.files:
+            stderr = _WRAPPER_FRAME.sub(r"\1", stderr)
         result = ExecResult(
             ExecStatus.ok,
             stdout=_unb64(sub.get("stdout")),
-            stderr=_unb64(sub.get("stderr")),
+            stderr=stderr,
             compile_output=_unb64(sub.get("compile_output")),
             time_ms=time_ms,
             memory_kb=memory_kb,
@@ -293,10 +377,24 @@ def _run_capped(args: list[str], stdin: bytes, cwd: str, timeout_s: float, preex
     return proc.returncode, bytes(buffers["out"]), bytes(buffers["err"]), timed_out, capped.is_set(), elapsed
 
 
+def _place(source: Path, target: Path) -> None:
+    """Put a data file next to the program. POSIX: a hard link (instant, even for big
+    files; the stored file is read-only, so the program cannot change it). A copy when
+    running as root (read-only means nothing to root) and on Windows (a hard link there
+    would share the read-only flag, which temporary-folder clean-up resets)."""
+    if os.name == "posix" and os.geteuid() != 0:
+        try:
+            os.link(source, target)
+            return
+        except OSError:
+            pass
+    shutil.copyfile(source, target)
+
+
 class LocalDevExecutor(Executor):
     """Runs Python 3 locally for development. NOT a security boundary."""
 
-    PYTHON_KEYS = {"python3", "python", "python3-ml"}
+    PYTHON_KEYS = PYTHON_KEYS
 
     def __init__(self, max_concurrency: int = 4, ml_python: str | None = None) -> None:
         self._sem = asyncio.Semaphore(max_concurrency)
@@ -322,6 +420,11 @@ class LocalDevExecutor(Executor):
             with tempfile.TemporaryDirectory(prefix="aegis-run-") as workdir:
                 path = Path(workdir) / (req.file_name or "main.py")
                 path.write_text(req.source, encoding="utf-8")
+                try:
+                    for f in req.files:
+                        await asyncio.to_thread(_place, Path(f.path), Path(workdir) / f.name)
+                except OSError as exc:
+                    return ExecResult(ExecStatus.internal_error, message=f"data file missing on the server: {exc}")
                 limit_s = req.time_limit_ms / 1000
                 preexec = _limits(req.memory_limit_kb, math.ceil(limit_s) + 1) if resource is not None else None
                 try:

@@ -20,10 +20,10 @@ The hooks:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
-from .executor import ExecRequest, ExecResult, ExecStatus, Executor
+from .executor import DataFile, ExecRequest, ExecResult, ExecStatus, Executor
 
 SHOWN_OUTPUT_CHARS = 4000
 
@@ -119,6 +119,11 @@ class RunTarget:
     memory_limit_kb: int
     # Plain Python runtime, for graders that wrap the answer in a Python harness (SQL).
     python: Runtime | None = None
+    # The question's data files, placed next to the program for every test.
+    files: tuple[DataFile, ...] = ()
+
+    def with_files(self, request: ExecRequest) -> ExecRequest:
+        return replace(request, files=self.files) if self.files else request
 
 
 def _base_config(config: dict[str, Any], allowed: set[str]) -> dict[str, Any]:
@@ -183,7 +188,7 @@ class Grader(ABC):
             return GradeResult(fraction=0.0)
         try:
             self.validate_language(target.language_key)
-            requests = [self.prepare(target, t, config) for t in tests]
+            requests = [target.with_files(self.prepare(target, t, config)) for t in tests]
         except ValueError as exc:
             return GradeResult(0.0, [_outcome(t, Verdict.internal_error, 0.0, None, str(exc)) for t in tests])
         results = await executor.run_batch(requests)

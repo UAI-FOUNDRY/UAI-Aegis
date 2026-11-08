@@ -3,7 +3,7 @@
 from .audit import GENESIS_HASH, AuditEntry, AuditHead
 from .auth import AuthSession, ClientKind, ClientRelease, Device
 from .base import Base, utcnow
-from .content import Difficulty, Question, TestCase
+from .content import Difficulty, Question, QuestionFile, TestCase
 from .exam import (
     Answer,
     Exam,
@@ -21,6 +21,7 @@ from .org import (
     AccessGrant,
     Batch,
     BatchMember,
+    BlockedApp,
     Department,
     GrantRole,
     Language,
@@ -41,6 +42,7 @@ __all__ = [
     "Base",
     "Batch",
     "BatchMember",
+    "BlockedApp",
     "ClientKind",
     "ClientRelease",
     "Department",
@@ -54,6 +56,7 @@ __all__ = [
     "Language",
     "ProctorEvent",
     "Question",
+    "QuestionFile",
     "Role",
     "Run",
     "RunKind",

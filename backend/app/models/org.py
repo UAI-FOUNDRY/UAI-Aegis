@@ -124,6 +124,19 @@ class SubjectLanguage(Base):
     )
 
 
+class BlockedApp(IdMixin, CreatedMixin, Base):
+    """An app students must not run during exams (chat, AI assistants...), managed by
+    admins without a new app release. The student app checks running process names
+    against this list before Start and every few seconds during the exam."""
+
+    __tablename__ = "blocked_apps"
+
+    process: Mapped[str] = mapped_column(String(64), unique=True)  # lower case, no ".exe"
+    label: Mapped[str] = mapped_column(String(80))
+    action: Mapped[str] = mapped_column(String(16), default="strike")  # strike | lock
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
 class AccessGrant(IdMixin, CreatedMixin, Base):
     """Who may see or change a subject's content.
 

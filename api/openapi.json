@@ -3,7 +3,7 @@
   "info": {
     "title": "UAI Aegis",
     "description": "Proctored practical exams for Universal AI University.",
-    "version": "0.10.3"
+    "version": "0.11.0"
   },
   "paths": {
     "/health": {
@@ -1275,6 +1275,122 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/blocked-apps": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List Blocked Apps",
+        "operationId": "list_blocked_apps_api_v1_admin_blocked_apps_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/app__api__v1__admin__BlockedAppOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Blocked Apps Api V1 Admin Blocked Apps Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Add Blocked App",
+        "description": "Students' apps check for it before Start and every few seconds during an exam,\nfrom their next exam on (no app update needed).",
+        "operationId": "add_blocked_app_api_v1_admin_blocked_apps_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlockedAppIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__api__v1__admin__BlockedAppOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/blocked-apps/{app_id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Remove Blocked App",
+        "operationId": "remove_blocked_app_api_v1_admin_blocked_apps__app_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "App Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -2571,6 +2687,222 @@
         }
       }
     },
+    "/api/v1/questions/{question_id}/files": {
+      "get": {
+        "tags": [
+          "questions"
+        ],
+        "summary": "List Files",
+        "operationId": "list_files_api_v1_questions__question_id__files_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Question Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/QuestionFileOut"
+                  },
+                  "title": "Response List Files Api V1 Questions  Question Id  Files Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "questions"
+        ],
+        "summary": "Add File",
+        "description": "Attach a data file to a question (a CSV for a pandas lab, a big training set...).\nStudents see it in the exam with a preview and a column summary, and their code opens\nit by name, e.g. ``pd.read_csv(\"marks.csv\")``: it is put next to the program for every\nrun. Uploading a file with an existing name replaces it (not while an exam using the\nquestion is live).",
+        "operationId": "add_file_api_v1_questions__question_id__files_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Question Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_add_file_api_v1_questions__question_id__files_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionFileDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/questions/{question_id}/files/{file_id}": {
+      "get": {
+        "tags": [
+          "questions"
+        ],
+        "summary": "Get File",
+        "operationId": "get_file_api_v1_questions__question_id__files__file_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Question Id"
+            }
+          },
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionFileDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "questions"
+        ],
+        "summary": "Delete File",
+        "operationId": "delete_file_api_v1_questions__question_id__files__file_id__delete",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Question Id"
+            }
+          },
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/questions/{question_id}/validate": {
       "post": {
         "tags": [
@@ -3585,6 +3917,134 @@
         }
       }
     },
+    "/api/v1/exams/{exam_id}/sessions/{session_id}/extend": {
+      "post": {
+        "tags": [
+          "exams"
+        ],
+        "summary": "Extend Session",
+        "description": "Give one student extra time (working or paused): e.g. their laptop failed, they\nlost time moving to another one, or they have an accommodation. Their app picks up\nthe new end time within seconds.",
+        "operationId": "extend_session_api_v1_exams__exam_id__sessions__session_id__extend_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "exam_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Exam Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtendIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonitorRow"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/exams/{exam_id}/extend": {
+      "post": {
+        "tags": [
+          "exams"
+        ],
+        "summary": "Extend Exam",
+        "description": "Give everyone who is still working (or paused) extra time, e.g. after a power cut\nor a network outage in the lab. Students who start later get the full duration anyway.",
+        "operationId": "extend_exam_api_v1_exams__exam_id__extend_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "exam_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Exam Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtendIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtendAllOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/exams/{exam_id}/sessions/{session_id}/terminate": {
       "post": {
         "tags": [
@@ -4176,6 +4636,106 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/student/sessions/{session_id}/questions/{question_id}/files/{file_id}": {
+      "get": {
+        "tags": [
+          "student"
+        ],
+        "summary": "File Preview",
+        "description": "A data file's summary: column types and ranges, the first rows (tables) or the\nfirst characters (text). Only for a question of the student's own running exam.",
+        "operationId": "file_preview_api_v1_student_sessions__session_id__questions__question_id__files__file_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Question Id"
+            }
+          },
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionFileDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/student/blocked-apps": {
+      "get": {
+        "tags": [
+          "student"
+        ],
+        "summary": "Blocked Apps",
+        "description": "Apps that must be closed before an exam starts (the app checks before Start).",
+        "operationId": "blocked_apps_api_v1_student_blocked_apps_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/app__api__v1__student__BlockedAppOut"
+                  },
+                  "type": "array",
+                  "title": "Response Blocked Apps Api V1 Student Blocked Apps Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/api/v1/student/sessions/{session_id}/answers/{question_id}": {
@@ -5145,6 +5705,37 @@
         ],
         "title": "BatchProgress"
       },
+      "BlockedAppIn": {
+        "properties": {
+          "process": {
+            "type": "string",
+            "maxLength": 68,
+            "minLength": 1,
+            "title": "Process",
+            "description": "Process name, e.g. WhatsApp.exe or whatsapp"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Label",
+            "description": "Shown to students: 'Close WhatsApp'"
+          },
+          "action": {
+            "type": "string",
+            "pattern": "^(strike|lock)$",
+            "title": "Action",
+            "description": "strike: counts as one strike; lock: pauses the exam until a professor resumes",
+            "default": "strike"
+          }
+        },
+        "type": "object",
+        "required": [
+          "process",
+          "label"
+        ],
+        "title": "BlockedAppIn"
+      },
       "Body_add_dataset_api_v1_questions__question_id__datasets_post": {
         "properties": {
           "train": {
@@ -5186,6 +5777,33 @@
           "test"
         ],
         "title": "Body_add_dataset_api_v1_questions__question_id__datasets_post"
+      },
+      "Body_add_file_api_v1_questions__question_id__files_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": "A data file the student's code opens by name, e.g. marks.csv"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "Name the code uses; default: the uploaded file's name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_add_file_api_v1_questions__question_id__files_post"
       },
       "Body_import_users_api_v1_admin_users_import_post": {
         "properties": {
@@ -6079,6 +6697,46 @@
           "batches"
         ],
         "title": "ExamSummary"
+      },
+      "ExtendAllOut": {
+        "properties": {
+          "extended": {
+            "type": "integer",
+            "title": "Extended"
+          },
+          "minutes": {
+            "type": "integer",
+            "title": "Minutes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "extended",
+          "minutes"
+        ],
+        "title": "ExtendAllOut"
+      },
+      "ExtendIn": {
+        "properties": {
+          "minutes": {
+            "type": "integer",
+            "maximum": 240.0,
+            "minimum": 1.0,
+            "title": "Minutes"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Reason",
+            "description": "Shown in the student's timeline, e.g. 'laptop restarted'.",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "minutes"
+        ],
+        "title": "ExtendIn"
       },
       "FinishOut": {
         "properties": {
@@ -7147,6 +7805,136 @@
           "version"
         ],
         "title": "QuestionDetail"
+      },
+      "QuestionFileDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows"
+          },
+          "column_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Column Count"
+          },
+          "read_hint": {
+            "type": "string",
+            "title": "Read Hint"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "size_bytes",
+          "kind",
+          "read_hint",
+          "created_at",
+          "meta"
+        ],
+        "title": "QuestionFileDetail"
+      },
+      "QuestionFileOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows"
+          },
+          "column_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Column Count"
+          },
+          "read_hint": {
+            "type": "string",
+            "title": "Read Hint"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "size_bytes",
+          "kind",
+          "read_hint",
+          "created_at"
+        ],
+        "title": "QuestionFileOut"
       },
       "QuestionIn": {
         "properties": {
@@ -8279,6 +9067,13 @@
             },
             "type": "array",
             "title": "Receipts"
+          },
+          "blocked_apps": {
+            "items": {
+              "$ref": "#/components/schemas/app__api__v1__student__BlockedAppOut"
+            },
+            "type": "array",
+            "title": "Blocked Apps"
           }
         },
         "type": "object",
@@ -8560,6 +9355,13 @@
           "hidden_test_count": {
             "type": "integer",
             "title": "Hidden Test Count"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionFileOut"
+            },
+            "type": "array",
+            "title": "Files"
           },
           "draft": {
             "anyOf": [
@@ -9695,6 +10497,64 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "app__api__v1__admin__BlockedAppOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "process": {
+            "type": "string",
+            "title": "Process"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "process",
+          "label",
+          "action",
+          "created_at"
+        ],
+        "title": "BlockedAppOut"
+      },
+      "app__api__v1__student__BlockedAppOut": {
+        "properties": {
+          "process": {
+            "type": "string",
+            "title": "Process"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action"
+          }
+        },
+        "type": "object",
+        "required": [
+          "process",
+          "label",
+          "action"
+        ],
+        "title": "BlockedAppOut"
       }
     },
     "securitySchemes": {

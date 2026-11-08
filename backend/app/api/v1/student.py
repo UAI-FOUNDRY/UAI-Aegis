@@ -27,6 +27,7 @@ from ...models import (
     Answer,
     Batch,
     BatchMember,
+    BlockedApp,
     ClientRelease,
     Device,
     Exam,
@@ -35,6 +36,7 @@ from ...models import (
     ExamStatus,
     Language,
     Question,
+    QuestionFile,
     Run,
     RunKind,
     SessionQuestion,
@@ -65,6 +67,7 @@ from ...services.proctoring import EVENT_KIND, ExamPolicy, apply_event, effectiv
 from ...state import AppState
 from ..deps import get_db, get_state, require_student, signed_device
 from .exams import compute_results
+from .questions import QuestionFileDetail, QuestionFileOut, file_detail, file_out
 
 router = APIRouter(prefix="/student", tags=["student"])
 
@@ -137,12 +140,20 @@ class StudentQuestion(BaseModel):
     starter_code: dict[str, str]
     samples: list[SampleOut]
     hidden_test_count: int
+    # Data files the code can open by name (preview: GET .../questions/{id}/files/{file_id}).
+    files: list[QuestionFileOut] = Field(default_factory=list)
     draft: DraftOut | None
 
 
 class Receipt(BaseModel):
     question_id: uuid.UUID
     receipt: str
+
+
+class BlockedAppOut(BaseModel):
+    process: str  # lower case, without ".exe"
+    label: str
+    action: str  # strike | lock
 
 
 class SessionView(BaseModel):
@@ -162,6 +173,8 @@ class SessionView(BaseModel):
     finish_reason: str | None
     questions: list[StudentQuestion]
     receipts: list[Receipt]
+    # Apps that must not run during the exam (admin list, refreshed with every view).
+    blocked_apps: list[BlockedAppOut] = Field(default_factory=list)
 
 
 class SaveIn(BaseModel):
@@ -380,6 +393,8 @@ async def _view(db: AsyncSession, state: AppState, session: ExamSession, exam: E
             hidden = await db.scalar(select(func.count()).select_from(TestCase).where(
                 TestCase.question_id == q.id, TestCase.is_sample.is_(False)))
             answer = await db.scalar(select(Answer).where(Answer.session_id == session.id, Answer.question_id == q.id))
+            files = (await db.scalars(select(QuestionFile).where(QuestionFile.question_id == q.id)
+                                      .order_by(QuestionFile.name))).all()
             questions.append(StudentQuestion(
                 id=q.id, ordinal=ordinal, title=q.title, statement_md=q.statement_md, difficulty=q.difficulty.value,
                 marks=q.marks,
@@ -389,6 +404,7 @@ async def _view(db: AsyncSession, state: AppState, session: ExamSession, exam: E
                 samples=[SampleOut(ordinal=s.ordinal, input=s.input, expected_output=s.expected or "")
                          for s in samples],
                 hidden_test_count=hidden or 0,
+                files=[file_out(f) for f in files],
                 draft=DraftOut(language=answer.language,
                                code=state.cipher.decrypt_str(answer.code_enc, AAD.answer(session.id, q.id)),
                                revision=answer.revision, updated_at=answer.updated_at) if answer else None,
@@ -400,7 +416,13 @@ async def _view(db: AsyncSession, state: AppState, session: ExamSession, exam: E
         server_now=now, started_at=session.started_at, deadline_at=session.deadline_at,
         seconds_left=_seconds_left(session, now), finish_reason=session.finish_reason, questions=questions,
         receipts=await _receipts(db, session) if session.status in FINISHED else [],
+        blocked_apps=await _blocked_apps(db),
     )
+
+
+async def _blocked_apps(db: AsyncSession) -> list[BlockedAppOut]:
+    rows = (await db.scalars(select(BlockedApp).order_by(BlockedApp.process))).all()
+    return [BlockedAppOut(process=a.process, label=a.label, action=a.action) for a in rows]
 
 
 async def _check_client(db: AsyncSession, state: AppState, device: Device, body: StartIn) -> None:
@@ -570,6 +592,28 @@ async def get_session(session_id: uuid.UUID, state: AppState = Depends(get_state
     if session.status not in FINISHED and past_deadline(session, exam, utcnow()):
         await _time_up(db, state, session)
     return await _view(db, state, session, exam, device)
+
+
+@router.get("/sessions/{session_id}/questions/{question_id}/files/{file_id}", response_model=QuestionFileDetail)
+async def file_preview(session_id: uuid.UUID, question_id: uuid.UUID, file_id: uuid.UUID,
+                       db: AsyncSession = Depends(get_db), user: User = Depends(require_student),
+                       device: Device = Depends(signed_device)):
+    """A data file's summary: column types and ranges, the first rows (tables) or the
+    first characters (text). Only for a question of the student's own running exam."""
+    session, _ = await _session_for(db, user, device, session_id)
+    if session.status in FINISHED:
+        raise conflict("session_finished", "Your exam has ended.")
+    await _question_in_session(db, session, question_id)
+    row = await db.get(QuestionFile, file_id)
+    if row is None or row.question_id != question_id:
+        raise not_found()
+    return file_detail(row)
+
+
+@router.get("/blocked-apps", response_model=list[BlockedAppOut])
+async def blocked_apps(db: AsyncSession = Depends(get_db), user: User = Depends(require_student)):
+    """Apps that must be closed before an exam starts (the app checks before Start)."""
+    return await _blocked_apps(db)
 
 
 @router.put("/sessions/{session_id}/answers/{question_id}", response_model=SaveOut)

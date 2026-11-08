@@ -14,6 +14,7 @@ from .grading.executor import Executor
 from .security import passwords
 from .security.crypto import FieldCipher
 from .security.stores import NonceStore, RateLimiter
+from .services.files import FileStore
 from .services.live import LiveHub
 
 
@@ -53,3 +54,5 @@ class AppState:
         default_factory=lambda: asyncio.Semaphore(passwords.DEFAULT_CONCURRENCY))
     # Live monitor push (in memory, or Redis pub/sub when Redis is configured).
     live: LiveHub = field(default_factory=LiveHub)
+    # Question data files on disk (services/files.py).
+    files: FileStore = field(default_factory=lambda: FileStore("./data-files"))

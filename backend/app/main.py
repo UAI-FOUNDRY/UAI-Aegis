@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import uuid
 from collections.abc import AsyncIterator
 
@@ -25,6 +26,7 @@ from .grading.executor import Executor, Judge0Executor, LocalDevExecutor
 from .security.crypto import DecryptionError, FieldCipher
 from .security.stores import MemoryNonceStore, MemoryRateLimiter, RedisNonceStore, RedisRateLimiter
 from .services.exams import sweeper_loop
+from .services.files import FileStore
 from .services.live import LiveHub
 from .state import AppState
 
@@ -38,20 +40,28 @@ class BodyTooLarge(Exception):
     pass
 
 
+# Data file uploads (POST /questions/{id}/files) may be far bigger than other requests.
+_DATA_FILE_UPLOAD = re.compile(r"^/api/v1/questions/[0-9a-fA-F-]{36}/files$")
+
+
 class BodyLimit:
     """Refuse request bodies over the limit, including ones sent without a
-    Content-Length header (chunked), which would otherwise be read into memory whole."""
+    Content-Length header (chunked), which would otherwise be read into memory whole.
+    Data file uploads get their own, larger limit (the file plus form overhead)."""
 
-    def __init__(self, app, max_bytes: int) -> None:
+    def __init__(self, app, max_bytes: int, upload_max_bytes: int | None = None) -> None:
         self.app = app
-        self.max_bytes = max_bytes
+        self.default_max = max_bytes
+        self.upload_max = upload_max_bytes or max_bytes
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
+        upload = scope.get("method") == "POST" and _DATA_FILE_UPLOAD.match(scope.get("path", ""))
+        max_bytes = self.upload_max if upload else self.default_max
         for name, value in scope.get("headers", []):
             if name == b"content-length":
-                if not value.isdigit() or int(value) > self.max_bytes:
+                if not value.isdigit() or int(value) > max_bytes:
                     return await JSONResponse(_TOO_LARGE, status_code=413)(scope, receive, send)
         received = 0
         too_large = False
@@ -62,7 +72,7 @@ class BodyLimit:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > self.max_bytes:
+                if received > max_bytes:
                     too_large = True
                     raise BodyTooLarge()  # stops reading; the app answers with an error
             return message
@@ -116,6 +126,8 @@ def build_executor(settings: Settings) -> Executor:
             max_concurrency=settings.judge0_max_concurrency,
             poll_interval=settings.judge0_poll_interval_seconds,
             timeout=settings.judge0_timeout_seconds,
+            data_dir=settings.judge0_data_dir,
+            inline_files_max_bytes=settings.judge0_inline_files_max_bytes,
         )
     return LocalDevExecutor(ml_python=settings.ml_python_path)
 
@@ -140,6 +152,7 @@ def build_state(settings: Settings, executor: Executor | None = None) -> AppStat
         nonces=nonces,
         redis=redis,
         live=LiveHub(redis),
+        files=FileStore(settings.data_files_dir),
     )
 
 
@@ -178,7 +191,8 @@ def create_app(settings: Settings | None = None, *, state: AppState | None = Non
     app.state.aegis = state
 
     app.add_middleware(SecurityHeaders, settings=settings)
-    app.add_middleware(BodyLimit, max_bytes=settings.max_body_bytes)  # outermost: runs first
+    app.add_middleware(BodyLimit, max_bytes=settings.max_body_bytes,  # outermost: runs first
+                       upload_max_bytes=settings.max_data_file_bytes + 1024 * 1024)
     if settings.cors_origin_list:
         app.add_middleware(
             CORSMiddleware,

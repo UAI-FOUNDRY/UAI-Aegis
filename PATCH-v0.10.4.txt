@@ -1,0 +1,11 @@
+UAI Aegis patch v0.10.4 - apply ON TOP of v0.10.3 (only 2 files changed)
+=====================================================================
+- backend/tests/test_live_monitor.py: the test web server for the live-monitor tests now
+  stops within a few seconds (uvicorn otherwise waits for open connections with no time
+  limit), and fails clearly if it cannot start.
+- backend/pyproject.toml: faulthandler_timeout = 120 - if any test hangs, pytest prints
+  where it is stuck after 2 minutes instead of waiting silently.
+
+Apply: unzip over the repo root, replace. Then in backend (venv active):
+  pytest -v -p no:cacheprovider
+-v prints each test name as it runs, so you can see it moving.

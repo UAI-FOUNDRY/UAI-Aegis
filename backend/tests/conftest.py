@@ -38,7 +38,7 @@ TEST_DB = os.environ.get("AEGIS_TEST_DATABASE_URL")
 @pytest_asyncio.fixture
 async def app(tmp_path):
     settings = Settings(env="test", database_url=TEST_DB or f"sqlite+aiosqlite:///{tmp_path}/test.db",
-                        sweeper_enabled=False, redis_url=None)
+                        sweeper_enabled=False, redis_url=None, data_files_dir=str(tmp_path / "data-files"))
     state = build_state(settings)
     async with state.engine.begin() as conn:
         if TEST_DB:

@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, Enum, ForeignKey, Integer, LargeBinary, String, Text
+from sqlalchemy import JSON, BigInteger, Boolean, Enum, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, CreatedMixin, IdMixin, UTCDateTime, utcnow
@@ -45,6 +45,29 @@ class Question(IdMixin, CreatedMixin, Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class QuestionFile(IdMixin, CreatedMixin, Base):
+    """A data file that comes with a question (e.g. marks.csv for a pandas lab).
+
+    Students see it in the exam (name, size, a preview and a column summary) and their
+    code opens it by name: it is placed next to the program for every run (Run, Submit,
+    final grading, and the professor's own tries). The bytes live on disk, not in the
+    database (services/files.py), under a random name that cannot be guessed.
+    """
+
+    __tablename__ = "question_files"
+    __table_args__ = (UniqueConstraint("question_id", "name"),)
+
+    question_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("questions.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(100))  # what the code opens, e.g. "marks.csv"
+    storage_key: Mapped[str] = mapped_column(String(64), unique=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    sha256: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(16))  # table | text | binary
+    # Computed once at upload: row count, column summary, first rows (services/files.py).
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
 
 
 class TestCase(IdMixin, CreatedMixin, Base):

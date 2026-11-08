@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..grading import get_grader
+from ..grading.executor import DataFile
 from ..grading.registry import GradeResult, RunTarget, Runtime, TestSpec
 from ..models import (
     Answer,
@@ -25,6 +26,7 @@ from ..models import (
     ExamSession,
     Language,
     Question,
+    QuestionFile,
     Run,
     RunKind,
     SessionStatus,
@@ -185,15 +187,24 @@ async def load_tests(
     ]
 
 
+async def question_data_files(state: AppState, db: AsyncSession, question_id: uuid.UUID) -> tuple[DataFile, ...]:
+    """The question's data files as the runners need them (where each one is stored)."""
+    rows = (await db.scalars(select(QuestionFile).where(QuestionFile.question_id == question_id)
+                             .order_by(QuestionFile.name))).all()
+    return tuple(DataFile(name=f.name, key=f.storage_key, path=str(state.files.path(f.storage_key)),
+                          size=f.size_bytes) for f in rows)
+
+
 async def build_target(
     state: AppState, question: Question, language: Language, code: str, *, time_limit_ms: int | None = None
 ) -> RunTarget:
     python = None
-    if get_grader(question.grader).needs_python:  # SQL and HTML answers run inside a small Python harness
-        async with state.sessionmaker() as db:
+    async with state.sessionmaker() as db:
+        if get_grader(question.grader).needs_python:  # SQL and HTML answers run inside a small Python harness
             py = await db.scalar(select(Language).where(Language.key == "python3"))
-        if py is not None:
-            python = Runtime(key=py.key, judge0_id=py.judge0_id, file_name=py.file_name)
+            if py is not None:
+                python = Runtime(key=py.key, judge0_id=py.judge0_id, file_name=py.file_name)
+        files = await question_data_files(state, db, question.id)
     return RunTarget(
         language_key=language.key,
         judge0_id=language.judge0_id,
@@ -202,6 +213,7 @@ async def build_target(
         time_limit_ms=time_limit_ms or time_limit_for(question, language, state.settings),
         memory_limit_kb=memory_for(question, state.settings, language),
         python=python,
+        files=files,
     )
 
 

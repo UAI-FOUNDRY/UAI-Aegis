@@ -11,6 +11,7 @@ Recommended workflow (most reliable, least typing):
 
 from __future__ import annotations
 
+import asyncio
 import math
 import uuid
 from datetime import datetime
@@ -21,16 +22,19 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...errors import ApiError, bad_request, not_found
+from ...errors import ApiError, bad_request, conflict, not_found
 from ...grading import get_grader, grader_keys
 from ...grading.executor import ExecStatus
 from ...grading.ml import split_dataset
 from ...grading.registry import GradeResult, TestSpec
 from ...models import (
     Difficulty,
+    Exam,
     ExamPoolQuestion,
+    ExamStatus,
     Language,
     Question,
+    QuestionFile,
     SessionQuestion,
     Subject,
     TestCase,
@@ -41,6 +45,7 @@ from ...security.crypto import AAD
 from ...services import audit
 from ...services.authz import Cap, caps_for, require_cap
 from ...services.exams import build_target, grade_code, load_tests
+from ...services.files import FileTooLarge, check_file_name, describe, read_code_hint
 from ...state import AppState
 from ..deps import get_db, get_state, require_professor
 
@@ -137,6 +142,21 @@ class TestPatch(BaseModel):
     is_sample: bool | None = None
     group: str | None = Field(None, min_length=1, max_length=64)
     weight: int | None = Field(None, ge=0, le=1000)
+
+
+class QuestionFileOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    size_bytes: int
+    kind: str  # table | text | binary
+    rows: int | None = None  # tables: data rows (header not counted)
+    column_count: int | None = None
+    read_hint: str  # e.g. pd.read_csv("marks.csv")
+    created_at: datetime
+
+
+class QuestionFileDetail(QuestionFileOut):
+    meta: dict[str, Any]  # column summary + first rows (tables), first characters (text)
 
 
 class TestOut(BaseModel):
@@ -395,8 +415,12 @@ async def delete_question(question_id: uuid.UUID, state: AppState = Depends(get_
         await db.commit()
         return {"result": "archived"}
     await _record(db, state, user, "question.deleted", question, {"title": question.title})
+    keys = list((await db.scalars(select(QuestionFile.storage_key).where(
+        QuestionFile.question_id == question.id))).all())
     await db.delete(question)
     await db.commit()
+    for key in keys:  # rows went with the question (ON DELETE CASCADE); now the bytes
+        state.files.delete(key)
     return {"result": "deleted"}
 
 
@@ -522,10 +546,10 @@ async def generate_outputs(question_id: uuid.UUID, only_missing: bool = Query(Fa
     run_target = await build_target(state, question, lang, code, time_limit_ms=state.settings.max_time_limit_ms)
     try:
         grader.validate_language(lang.key)
-        requests = [grader.prepare(run_target, TestSpec(
+        requests = [run_target.with_files(grader.prepare(run_target, TestSpec(
             id=str(t.id), ordinal=t.ordinal, is_sample=t.is_sample, group=t.group_name, weight=t.weight,
             input=state.cipher.decrypt_str(t.input_enc, AAD.test_input(t.id)), expected=None,
-        ), config) for t in targets]
+        ), config)) for t in targets]
     except ValueError as exc:
         raise bad_request("bad_reference", str(exc)) from None
     results = await state.executor.run_batch(requests) if requests else []
@@ -595,6 +619,124 @@ async def add_dataset(
     await _record(db, state, user, "question.dataset_added", question, {"test_id": str(case.id)})
     await db.commit()
     return _test_out(state, case)
+
+
+# --------------------------------------------------------------------------- data files
+
+
+def file_out(f: QuestionFile) -> QuestionFileOut:
+    meta = f.meta or {}
+    return QuestionFileOut(id=f.id, name=f.name, size_bytes=f.size_bytes, kind=f.kind, rows=meta.get("rows"),
+                           column_count=meta.get("column_count"), read_hint=read_code_hint(f.name, f.kind),
+                           created_at=f.created_at)
+
+
+def file_detail(f: QuestionFile) -> QuestionFileDetail:
+    return QuestionFileDetail(**file_out(f).model_dump(), meta=f.meta or {})
+
+
+async def _in_live_exam(db: AsyncSession, question_id: uuid.UUID) -> bool:
+    live = await db.scalar(select(func.count()).select_from(ExamPoolQuestion)
+                           .join(Exam, Exam.id == ExamPoolQuestion.exam_id)
+                           .where(ExamPoolQuestion.question_id == question_id, Exam.status == ExamStatus.live))
+    return bool(live)
+
+
+@router.get("/questions/{question_id}/files", response_model=list[QuestionFileOut])
+async def list_files(question_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                     user: User = Depends(require_professor)):
+    question = await _question_for(db, user, question_id, Cap.view)
+    files = (await db.scalars(select(QuestionFile).where(QuestionFile.question_id == question.id)
+                              .order_by(QuestionFile.name))).all()
+    return [file_out(f) for f in files]
+
+
+@router.post("/questions/{question_id}/files", response_model=QuestionFileDetail, status_code=201)
+async def add_file(
+    question_id: uuid.UUID,
+    file: UploadFile = File(..., description="A data file the student's code opens by name, e.g. marks.csv"),
+    name: str | None = Form(None, description="Name the code uses; default: the uploaded file's name"),
+    state: AppState = Depends(get_state),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_professor),
+):
+    """Attach a data file to a question (a CSV for a pandas lab, a big training set...).
+    Students see it in the exam with a preview and a column summary, and their code opens
+    it by name, e.g. ``pd.read_csv("marks.csv")``: it is put next to the program for every
+    run. Uploading a file with an existing name replaces it (not while an exam using the
+    question is live)."""
+    question = await _question_for(db, user, question_id, Cap.edit)
+    settings = state.settings
+    reserved = set((await db.scalars(select(Language.file_name))).all()) | {"solution.py"}
+    try:
+        file_name = check_file_name(name or file.filename or "", reserved)
+    except ValueError as exc:
+        raise bad_request("bad_file_name", str(exc)) from None
+    existing = (await db.scalars(select(QuestionFile).where(QuestionFile.question_id == question.id))).all()
+    replacing = next((f for f in existing if f.name.lower() == file_name.lower()), None)
+    if replacing is not None and await _in_live_exam(db, question.id):
+        raise conflict("question_in_live_exam", "Students may be using this file right now. Replace it after the exam.")
+    if replacing is None and len(existing) >= settings.max_data_files_per_question:
+        raise bad_request("too_many_files", f"A question can have at most {settings.max_data_files_per_question} files.")
+    try:
+        stored = await state.files.save(file, settings.max_data_file_bytes)
+    except FileTooLarge:
+        raise bad_request("too_large",
+                          f"Files can be up to {settings.max_data_file_bytes // (1024 * 1024)} MB.") from None
+    try:
+        kind, meta = await asyncio.to_thread(describe, stored.path, file_name)
+    except OSError as exc:
+        state.files.delete(stored.key)
+        raise ApiError(500, "file_unreadable", f"The file could not be read: {exc}") from None
+    if replacing is not None:
+        old_key = replacing.storage_key
+        replacing.storage_key, replacing.size_bytes, replacing.sha256 = stored.key, stored.size, stored.sha256
+        replacing.kind, replacing.meta, replacing.created_by = kind, meta, user.id
+        row = replacing
+    else:
+        old_key = None
+        row = QuestionFile(id=uuid.uuid4(), question_id=question.id, name=file_name, storage_key=stored.key,
+                           size_bytes=stored.size, sha256=stored.sha256, kind=kind, meta=meta, created_by=user.id)
+        db.add(row)
+    _touch(question)
+    await _record(db, state, user, "question.file_replaced" if replacing else "question.file_added", question,
+                  {"name": file_name, "size": stored.size, "sha256": stored.sha256})
+    try:
+        await db.commit()
+    except Exception:
+        state.files.delete(stored.key)
+        raise
+    if old_key:
+        state.files.delete(old_key)
+    await db.refresh(row)
+    return file_detail(row)
+
+
+@router.get("/questions/{question_id}/files/{file_id}", response_model=QuestionFileDetail)
+async def get_file(question_id: uuid.UUID, file_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                   user: User = Depends(require_professor)):
+    question = await _question_for(db, user, question_id, Cap.view)
+    row = await db.get(QuestionFile, file_id)
+    if row is None or row.question_id != question.id:
+        raise not_found()
+    return file_detail(row)
+
+
+@router.delete("/questions/{question_id}/files/{file_id}", status_code=204, response_model=None)
+async def delete_file(question_id: uuid.UUID, file_id: uuid.UUID, state: AppState = Depends(get_state),
+                      db: AsyncSession = Depends(get_db), user: User = Depends(require_professor)):
+    question = await _question_for(db, user, question_id, Cap.edit)
+    row = await db.get(QuestionFile, file_id)
+    if row is None or row.question_id != question.id:
+        raise not_found()
+    if await _in_live_exam(db, question.id):
+        raise conflict("question_in_live_exam", "Students may be using this file right now. Remove it after the exam.")
+    key = row.storage_key
+    await db.delete(row)
+    _touch(question)
+    await _record(db, state, user, "question.file_removed", question, {"name": row.name})
+    await db.commit()
+    state.files.delete(key)
 
 
 async def _grade_against_all(db: AsyncSession, state: AppState, question: Question, language_key: str,

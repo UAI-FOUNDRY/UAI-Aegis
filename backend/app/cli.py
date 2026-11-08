@@ -6,7 +6,8 @@
   demo-data               add demo accounts, a subject, a question and an exam (development only)
   export-openapi          write the OpenAPI contract (default ../api/openapi.json)
   verify-audit            check the audit log hash chain
-  check-judge0            compare language ids with GET /languages on the Judge0 server
+  check-judge0            compare language ids with GET /languages on the Judge0 server, and
+                          check that programs there can open question data files (small and big)
   bml-lab                 add a Basics of Machine Learning lab: one validated question per practical
   simulate                run a full simulated exam against a running server (--lab python|sql|ml|function|all)
 """
@@ -127,6 +128,55 @@ def _check_judge0(_: argparse.Namespace) -> None:
     for lang in asyncio.run(_with_state(run)):
         status = f"OK   {remote[lang.judge0_id]}" if lang.judge0_id in remote else "MISSING on this Judge0 server"
         print(f"{lang.key:>12}  id {lang.judge0_id:>3}  {status}")
+    if not asyncio.run(_check_judge0_files(settings)):
+        sys.exit(1)
+
+
+async def _check_judge0_files(settings: Settings) -> bool:
+    """Run a Python program on Judge0 that opens one small data file (sent with the
+    submission) and one bigger than judge0_inline_files_max_bytes (read from the shared
+    data folder, judge/README.md)."""
+    from .grading.executor import DataFile, ExecRequest, ExecStatus, Judge0Executor
+    from .services.files import FileStore
+
+    class _Bytes:
+        def __init__(self, data: bytes) -> None:
+            self._data = data
+
+        async def read(self, n: int) -> bytes:
+            chunk, self._data = self._data[:n], self._data[n:]
+            return chunk
+
+    store = FileStore(settings.data_files_dir)
+    big_size = settings.judge0_inline_files_max_bytes + 1024
+    small = await store.save(_Bytes(b"aegis-small\n"), 1024)
+    big = await store.save(_Bytes(b"aegis-big\n" + b"x" * big_size), big_size + 64)
+    judge = Judge0Executor(settings.judge0_url, token=settings.judge0_token, data_dir=settings.judge0_data_dir,
+                           inline_files_max_bytes=settings.judge0_inline_files_max_bytes)
+
+    def request(name: str, stored) -> ExecRequest:
+        return ExecRequest("python3", 71, "main.py", f"print(open({name!r}).readline().strip())\n", "", 5000,
+                           262144, files=(DataFile(name, stored.key, str(stored.path), stored.size),))
+
+    try:
+        small_run, big_run = await judge.run_batch([request("small.txt", small), request("big.txt", big)])
+    finally:
+        await judge.aclose()
+        store.delete(small.key)
+        store.delete(big.key)
+    ok = True
+    for label, result, expected, advice in (
+        ("small data files (sent with each run)", small_run, "aegis-small",
+         "Judge0 did not unpack additional_files; check the Judge0 version (1.13+)."),
+        ("big data files (shared folder)", big_run, "aegis-big",
+         f"The Judge0 workers must see {settings.data_files_dir} read-only at {settings.judge0_data_dir} "
+         "(docker-compose.yml volume 'data-files'), see judge/README.md."),
+    ):
+        good = result.status is ExecStatus.ok and result.stdout.strip() == expected
+        ok = ok and good
+        detail = "" if good else f"  -> {(result.stderr or result.message).strip()[:300]}\n     {advice}"
+        print(f"{'OK  ' if good else 'FAIL'} {label}{detail}")
+    return ok
 
 
 def _simulate(args: argparse.Namespace) -> None:

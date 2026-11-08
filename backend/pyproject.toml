@@ -1,6 +1,6 @@
 [project]
 name = "uai-aegis-backend"
-version = "0.10.3"
+version = "0.11.0"
 description = "UAI Aegis: proctored practical exams for Universal AI University"
 requires-python = ">=3.12,<3.15"
 
