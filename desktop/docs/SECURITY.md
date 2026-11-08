@@ -1,0 +1,174 @@
+# UAI Aegis security design
+
+## The honest starting point
+
+Students take exams on **their own laptops**, where they have full admin rights. No
+software running on such a machine is truly uncrackable. So Aegis treats the student
+app as the first wall, not the last one:
+
+1. **The app** blocks and detects (full screen, Alt+Tab, outside paste, VMs, remote
+   desktop, screen capture, second monitors).
+2. **The server** enforces everything that decides marks. Even a cracked app cannot
+   read another student's work, fake a test result, write after time is up, or keep
+   working while locked.
+3. **People** stay in the loop: the professor in the room sees the live monitor and
+   the full event timeline, and decides what happens after a lock.
+
+## What the server enforces
+
+- **Language lock.** An exam locked to a language (e.g. Python only) is enforced by the
+  server: answers in any other language are refused, whatever the app sends.
+- **ML labels never leave the server.** The sandbox gets the training data and the test
+  features only; predictions are scored on the server.
+- **SQL answers** run in an in-memory SQLite database inside the sandbox, with
+  `ATTACH`/`DETACH` denied, so a query cannot open other files.
+- **Server-side timer.** The deadline lives on the server. Every write checks it, and a
+  background sweeper auto-submits sessions when time is up.
+- **Hidden tests never leave the server.** Students only ever receive sample tests.
+  Code always runs on the server (Judge0), never on the laptop, so a "passed" result
+  cannot be faked.
+- **Device binding.** Each laptop registers an Ed25519 public key; the private key stays
+  in the OS keychain. Every exam request is signed (method, path, timestamp, nonce, body
+  hash). A copied login token is useless on another machine.
+- **Replay protection.** Each nonce is accepted once; timestamps older than 2 minutes
+  are rejected.
+- **One session per student per exam, one laptop per session.** Enforced by a unique
+  database constraint. Opening the exam on another laptop locks the session until a
+  professor approves the move.
+- **Lock state.** While locked, saves, runs, submits and finishing are refused (HTTP 423)
+  no matter what the app sends.
+- **Rate limits.** Sign-in attempts (per email and per IP), wrong exam codes, device
+  registration, autosaves, and Run/Submit per question.
+- **Approved app builds.** With `AEGIS_REQUIRE_KNOWN_CLIENT=true`, exams start only from
+  app versions and build hashes an admin has registered. This stops old and naively
+  modified builds; a determined attacker can fake the hash, which is why everything
+  above is enforced server-side anyway.
+
+## Violation policy (lock, not auto-submit)
+
+- **Info** events (blocked paste, blocked shortcut, Wi-Fi reconnect, heartbeat gap) are
+  recorded only.
+- **Minor** events (focus lost, full screen exited, app restarted) add a strike and a
+  warning. At `max_strikes` (default 3) the session locks.
+- **Severe** events (VM, remote desktop, screen capture, blocked app, debugger, second
+  monitor, failed integrity check, another laptop) lock at once.
+- A locked student sees "waiting for your professor". Their code is frozen and safe.
+- The professor can **resume** (optionally adding minutes after a false alarm, and
+  approving a laptop switch) or **end** the exam (the frozen code is submitted).
+- **The timer keeps running while locked**, so a lock never buys extra time.
+- If no professor acts before the deadline, the frozen code is auto-submitted and the
+  session is flagged `locked_at_end` for review.
+
+Why not auto-submit on the first violation: it cannot be undone, and false alarms
+(antivirus popups, OS update notices, a bumped touchpad) would end honest students'
+exams. A lock stops cheating just as fast and keeps the decision with a human.
+
+Every severity, the strike limit and whether severe events lock are per-exam settings.
+Penalties for misconduct are not automatic; the professor decides.
+
+## Data protection
+
+- **Passwords:** Argon2id with OWASP's recommended parameters (19 MiB, 2 iterations),
+  checked in worker threads so a whole lab signing in at once does not stall the
+  server. Unknown emails take the same time as wrong passwords, and return the same
+  error, so accounts cannot be enumerated.
+- **Login tokens:** 256-bit random, stored only as SHA-256 hashes, revocable instantly.
+  Logging out, deactivating a user, changing a role or changing a password revokes
+  sessions.
+- **Encryption at rest:** student code (drafts, final answers, run history), hidden test
+  inputs and outputs, reference solutions and exam access codes are encrypted with
+  AES-256-GCM. A database dump or backup does not reveal them.
+- **Answers cannot be mixed up.** Each ciphertext is bound to its row through GCM
+  associated data (for an answer: its session id and question id). If ciphertexts are
+  swapped or copied between rows, decryption fails with an integrity error instead of
+  showing one student's code as another's. Unique constraints make it impossible for
+  two students to share a session or an answer row.
+- **Key rotation:** keys carry ids; add a new key as active and old rows still decrypt.
+- **Receipts:** when a student finishes, each answer gets a SHA-256 receipt bound to the
+  session and question, as proof of exactly what was submitted.
+- **Random IDs:** every ID is a random UUID, so IDs cannot be guessed or enumerated.
+- **Question data files** (datasets) are not secret during the exam (students see them)
+  and are stored as plain files in `AEGIS_DATA_FILES_DIR`, outside the database, each
+  under a random 32-hex-character name and read-only. Before an exam they are as private
+  as the question: only professors with access to the subject can list or read them, and
+  a student only through a running session that has that question. The files never go
+  to the laptop: the app shows a summary computed at upload, and the student's code reads
+  the file on the server, where it runs (no download, no internet). In Judge0 the folder
+  is mounted read-only and cannot be listed (`rwx--x--x`), so a program can open only the
+  files of its own question. Files cannot be replaced or removed while an exam using the
+  question is live.
+
+## Who can see what
+
+- **Students** see only their own sessions. Anyone else's session returns 404, exactly
+  like one that does not exist.
+- **Professors** see a subject only through a grant: owner, editor, grader or viewer,
+  for the whole subject or for one exam (e.g. a co-evaluator). No grant means 404.
+- **Admins** manage accounts, subjects and grants but cannot read questions, tests or
+  answers, and grants can only be given to professors.
+- A subject always keeps at least one owner.
+- **Self-marking is impossible:** student code runs in the sandbox, but verdicts are
+  always decided on the server. ML labels, function expected values and plot checks never
+  enter the sandbox; the sandbox only reports what the code produced (predictions, a
+  return value, what a chart contains).
+- **Datasets** (ML questions) are uploaded by professors through the portal, stored
+  encrypted on the server, and sent to students only inside API responses (sample
+  datasets) and to the sandbox (all datasets). Hidden labels never leave the server.
+  Students cannot upload files, and student code runs only in the sandbox, which has no
+  network. The app shows datasets in a read-only in-app viewer, with no download, file
+  dialogs, clickable links or remote images.
+- **Live monitor:** the WebSocket needs a ticket from `POST /exams/{id}/live-ticket`,
+  which runs the normal permission check. The ticket is HMAC-signed, bound to that exam
+  and that sign-in, valid for 30 seconds and usable once. While connected, the server
+  re-checks the sign-in and the grant every 10 seconds, so signing out, deactivation or
+  a removed grant ends the stream. Connections from another website's pages are refused
+  (Origin check). Pushed notes contain only ids and a change name, never names, code or
+  marks; each connection reads rows from the database with its own permission check.
+
+## Tamper-evident audit log
+
+Sensitive actions (account and role changes, grants, question and test edits, exam
+open/close, locks, resumes, terminations, auto-submits, mark changes with before/after
+values) are written in the same database transaction as the change. Each entry stores
+HMAC-SHA256(audit key, previous hash | entry). Editing, deleting or reordering any past
+entry breaks the chain, and without the audit key (kept off the database server) the
+chain cannot be rebuilt to hide it. Check it any time with
+`python -m app.cli verify-audit` or `GET /api/v1/admin/audit/verify`.
+
+## Hardening
+
+- Security headers on every response; API responses are `Cache-Control: no-store`.
+- Request size cap (8 MB), enforced while the body arrives (also for chunked uploads with
+  no `Content-Length`); code and test size limits. Data file uploads alone get a larger
+  cap (`AEGIS_MAX_DATA_FILE_BYTES`, 200 MB) and are written to disk as they arrive.
+- Dependencies are pinned and checked with `pip-audit` (no known vulnerabilities at
+  v0.9); re-run it before each deployment.
+- CORS limited to the portal's origin; no cookies, so no CSRF surface.
+- Interactive docs and the OpenAPI file are disabled in production.
+- Production refuses to start with development keys, SQLite, the local code runner,
+  no Redis, or unregistered app builds allowed.
+- Judge0 is not exposed on any host port and runs with network access disabled.
+
+## Operational checklist for the server
+
+- Generate `AEGIS_DATA_KEYS` and `AEGIS_AUDIT_KEY` with `python -m app.cli gen-key`. Store
+  them outside the repository and the database server, and back them up: losing the
+  data key means losing every encrypted answer.
+- Put the API behind HTTPS (nginx or Caddy) and enable HSTS (automatic in production).
+  Set the proxy's request body limit too (e.g. nginx `client_max_body_size 8m`, and
+  `201m` for `location ~ ^/api/v1/questions/[^/]+/files$` so professors can upload
+  datasets).
+- Behind the proxy, start uvicorn with `--proxy-headers --forwarded-allow-ips=<proxy ip>`.
+  Otherwise every student appears to come from the proxy's address, and the per-IP
+  sign-in limit (300 failed attempts in 15 minutes) would apply to the whole college at
+  once. List campus networks in `AEGIS_LOGIN_IP_EXEMPT_NETWORKS` (e.g. `10.0.0.0/8`) so a
+  lab sharing one address is limited per account only (10 failures per email).
+- Serve the API at the root of its host name (e.g. `https://aegis.uai.edu.in/api/v1/...`),
+  not under a path prefix that the proxy strips: the desktop app signs the exact path.
+- Run several workers (`--workers 4` or one per CPU core) with Redis configured.
+- Set `AEGIS_ALLOWED_EMAIL_DOMAINS` to the college domain.
+- Register each released desktop build (`/api/v1/admin/client-releases`) and set
+  `AEGIS_REQUIRE_KNOWN_CLIENT=true`.
+- Run `verify-audit` on a schedule and after every exam.
+- Back up PostgreSQL nightly; backups contain only encrypted code and tests. Back up
+  `AEGIS_DATA_FILES_DIR` with it (questions refer to their data files).

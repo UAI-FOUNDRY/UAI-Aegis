@@ -48,6 +48,37 @@ Notes:
 - On a laptop without Judge0, `AEGIS_EXECUTOR=local_dev` runs `python3-ml` answers with
   `backend/.venv-ml` (see the README there).
 
+## Question data files (datasets)
+
+Professors can attach files to a question (`marks.csv`, a training set...); the
+student's code opens them by name. On Judge0:
+
+- **Small files** (up to `AEGIS_JUDGE0_INLINE_FILES_MAX_BYTES`, 1 MB by default) travel
+  inside each submission (`additional_files`), so they work in every language.
+- **Bigger files** (up to 200 MB) are not sent at all: the API keeps them in
+  `AEGIS_DATA_FILES_DIR`, the Judge0 workers mount the same folder read-only at
+  `/usr/share/aegis-data` (`docker-compose.yml`, volume `data-files`), and a Python
+  answer gets a link to the file next to the program. Python only; other languages get
+  a clear message if a file is too big for them.
+- The folder can be entered but not listed (`rwx--x--x`) and files have random names, so
+  a program can only open the files of its own question.
+
+Check both paths after starting Judge0 (part of `check-judge0`):
+
+```bash
+docker compose exec api python -m app.cli check-judge0
+```
+
+`FAIL big data files` means the sandboxes cannot see the shared folder. isolate binds
+`/usr` into every box; older isolate versions do not include mounts below it. Then
+either upgrade the Judge0 image, or raise `AEGIS_JUDGE0_INLINE_FILES_MAX_BYTES` so
+files travel with each submission (simple, but every run then carries the file and
+Judge0's own database grows; clear it after exams with
+`docker compose exec judge0-db psql -U judge0 -c 'TRUNCATE submissions'`).
+
+Back up the `data-files` volume together with the database: questions refer to the
+files by name.
+
 ## Known setup issue
 
 Judge0 1.13 needs **cgroup v1** on the host. Many current Linux distributions (and
