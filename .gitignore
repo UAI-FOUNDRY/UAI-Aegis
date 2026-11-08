@@ -12,8 +12,10 @@ venv/
 .ruff_cache/
 *.egg-info/
 
-# Local databases and simulated device keys
+# Local databases, question data files and simulated device keys
 .aegis-sim/
+data-files/
+.venv-ml/
 *.db
 *.db-shm
 *.db-wal

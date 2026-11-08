@@ -38,6 +38,10 @@ services:
     environment:
       AEGIS_DATABASE_URL: postgresql+asyncpg://aegis:${AEGIS_DB_PASSWORD:-aegis-dev-only}@db:5432/aegis
       AEGIS_REDIS_URL: redis://redis:6379/0
+      AEGIS_DATA_FILES_DIR: /srv/aegis-data
+    volumes:
+      # Question data files (datasets). Back this up together with the database.
+      - data-files:/srv/aegis-data
     depends_on:
       db:
         condition: service_healthy
@@ -68,6 +72,9 @@ services:
     command: ["./scripts/workers"]
     volumes:
       - ./judge/judge0.conf:/judge0.conf:ro
+      # The same data files, read-only, under /usr (which every sandbox can read): big
+      # datasets are linked from here instead of being sent with every run.
+      - data-files:/usr/share/aegis-data:ro
     privileged: true
     depends_on: [judge0-db, judge0-redis]
 
@@ -86,4 +93,5 @@ services:
 
 volumes:
   db-data:
+  data-files:
   judge0-db-data:

@@ -1,0 +1,37 @@
+UAI Aegis patch v0.11.0 - apply ON TOP of v0.10.4 (only changed/added files)
+=========================================================================
+New
+- Data files on questions (datasets up to 200 MB): professors upload in Step B of the
+  question wizard (preview + column summary); students see them under the question
+  (first 50 rows, column types/missing/min/max/mean) and their code opens them by name,
+  e.g. pd.read_csv("marks.csv"). Files stay on the server where the code runs.
+- Extra time: "+ Time" per student and "+ Time for everyone" in the live monitor.
+  The student's app shows "Your professor gave you N more minutes".
+- Blocked apps: Admin > Blocked apps (WhatsApp, ChatGPT...). The student app checks them
+  before Start and during the exam: one strike, or pause the exam (admin's choice).
+- Laptop switch: the old (or rejected) laptop now leaves lockdown and shows "This exam is
+  on another laptop" instead of staying locked forever.
+- Sign-in: a lab behind one campus address is no longer locked out by a few typos
+  (per-IP limit 30 -> 300; AEGIS_LOGIN_IP_EXEMPT_NETWORKS for campus ranges).
+- Simulate now also checks data files and extra time (109 checks).
+
+Database: migration 0004 (question_files, blocked_apps tables) - run alembic upgrade head.
+Old notes PATCH-v0.10.3.txt / PATCH-v0.10.4.txt in the repo root can be deleted.
+
+Apply (Windows, PowerShell)
+  unzip over the repo root, replace all
+  cd backend; .venv\Scripts\Activate.ps1
+  alembic upgrade head            <- NEW TABLES, do not skip
+  pytest -q                       (126 tests; ~1 min)
+  restart uvicorn, then:  python -m app.cli simulate   (ALL CHECKS PASSED)
+  cd ..\portal;  npm run build
+  cd ..\desktop; npm run build; cd src-tauri; cargo test --lib   (23 tests)
+
+Checked here: backend tests on SQLite, PostgreSQL+Redis and Python 3.14; simulate on
+PostgreSQL+Redis with 2 workers; portal in a real browser (upload + preview, + Time,
+blocked apps); the student's data file viewer rendered with real server data; Rust tests,
+release build, and the Windows-only and macOS-only code type-checked.
+
+Commit
+  git add -A
+  git commit -m "v0.11.0: data files, extra time, blocked apps, laptop switch fix"
