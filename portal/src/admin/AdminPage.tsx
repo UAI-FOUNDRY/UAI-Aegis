@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import AuditAdmin from './AuditAdmin'
+import BlockedAppsAdmin from './BlockedAppsAdmin'
 import BatchesAdmin from './BatchesAdmin'
 import DepartmentsAdmin from './DepartmentsAdmin'
 import ImportAdmin from './ImportAdmin'
@@ -51,6 +52,7 @@ export default function AdminPage({ section, onSection, userName, currentUserId,
         {section === 'batches' && <BatchesAdmin />}
         {section === 'languages' && <LanguagesAdmin />}
         {section === 'releases' && <ReleasesAdmin />}
+        {section === 'blocked-apps' && <BlockedAppsAdmin />}
         {section === 'audit' && <AuditAdmin />}
         {section === 'account' && account}
       </div>

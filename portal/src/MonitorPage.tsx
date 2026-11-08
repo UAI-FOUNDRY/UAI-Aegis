@@ -28,6 +28,7 @@ type Action =
   | { kind: 'lock'; row: MonitorRow }
   | { kind: 'resume'; row: MonitorRow }
   | { kind: 'terminate'; row: MonitorRow }
+  | { kind: 'extend'; row: MonitorRow }
 
 function formatRemaining(ms: number): string {
   if (ms <= 0) return 'Time up'
@@ -137,6 +138,10 @@ export default function MonitorPage({ examId, onBack, onOpenSession, onOpenResul
   const [approveDevice, setApproveDevice] = useState(true)
   const [terminateReason, setTerminateReason] = useState('')
   const [closeOpen, setCloseOpen] = useState(false)
+  // Extra time: one student (row action) or everyone still working (header button).
+  const [addMinutes, setAddMinutes] = useState(10)
+  const [addReason, setAddReason] = useState('')
+  const [extendAllOpen, setExtendAllOpen] = useState(false)
 
   const beep = useCallback(() => {
     const ctx = audioRef.current
@@ -224,6 +229,8 @@ export default function MonitorPage({ examId, onBack, onOpenSession, onOpenResul
 
   function openAction(next: Action) {
     setLockReason('locked_by_professor')
+    setAddMinutes(10)
+    setAddReason('')
     setExtraMinutes(0)
     setResetStrikes(true)
     setApproveDevice(true)
@@ -239,7 +246,12 @@ export default function MonitorPage({ examId, onBack, onOpenSession, onOpenResul
     setBusy(true)
     try {
       const result =
-        action.kind === 'lock'
+        action.kind === 'extend'
+          ? await api.POST('/api/v1/exams/{exam_id}/sessions/{session_id}/extend', {
+              params: { path },
+              body: { minutes: addMinutes, reason: addReason.trim() },
+            })
+          : action.kind === 'lock'
           ? await api.POST('/api/v1/exams/{exam_id}/sessions/{session_id}/lock', {
               params: { path },
               body: { reason: lockReason.trim() || 'locked_by_professor' },
@@ -261,7 +273,9 @@ export default function MonitorPage({ examId, onBack, onOpenSession, onOpenResul
       // Apply the returned row now; do not wait for the push.
       monitor.applyRow(result.data as MonitorRow)
       notify(
-        action.kind === 'lock'
+        action.kind === 'extend'
+          ? `${action.row.student.full_name} got ${addMinutes} more minute${addMinutes === 1 ? '' : 's'}.`
+          : action.kind === 'lock'
           ? `${action.row.student.full_name} locked.`
           : action.kind === 'resume'
             ? `${action.row.student.full_name} resumed.`
@@ -274,6 +288,23 @@ export default function MonitorPage({ examId, onBack, onOpenSession, onOpenResul
     } finally {
       setBusy(false)
     }
+  }
+
+  async function extendAll() {
+    setBusy(true)
+    const result = await api.POST('/api/v1/exams/{exam_id}/extend', {
+      params: { path: { exam_id: examId } },
+      body: { minutes: addMinutes, reason: addReason.trim() },
+    })
+    setBusy(false)
+    if (result.error) {
+      notify(errorText(result.error, 'Could not add time.'), 'error')
+      return
+    }
+    const { extended } = result.data as { extended: number }
+    setExtendAllOpen(false)
+    notify(`${extended} student${extended === 1 ? '' : 's'} got ${addMinutes} more minute${addMinutes === 1 ? '' : 's'}.`, 'success')
+    void monitor.refresh()
   }
 
   async function closeExam() {
@@ -330,6 +361,18 @@ export default function MonitorPage({ examId, onBack, onOpenSession, onOpenResul
           <button type="button" onClick={toggleSound} aria-pressed={soundOn}>
             {soundOn ? '🔔 Alert sound on' : '🔕 Turn on alert sound'}
           </button>
+          {canProctor && isLive && (
+            <button
+              type="button"
+              onClick={() => {
+                setAddMinutes(10)
+                setAddReason('')
+                setExtendAllOpen(true)
+              }}
+            >
+              + Time for everyone
+            </button>
+          )}
           {canProctor && isLive && (
             <button type="button" style={dangerButton} onClick={() => setCloseOpen(true)}>
               Close exam
@@ -520,6 +563,11 @@ export default function MonitorPage({ examId, onBack, onOpenSession, onOpenResul
                           </button>
                         )}{' '}
                         {running && (
+                          <button type="button" onClick={() => openAction({ kind: 'extend', row })} title="Give this student extra time">
+                            + Time
+                          </button>
+                        )}{' '}
+                        {running && (
                           <button type="button" onClick={() => openAction({ kind: 'terminate', row })}>
                             Terminate
                           </button>
@@ -605,6 +653,86 @@ export default function MonitorPage({ examId, onBack, onOpenSession, onOpenResul
           </Dialog>
         )
       })()}
+
+      {action?.kind === 'extend' && (
+        <Dialog title={`Extra time for ${action.row.student.full_name}`} onClose={closeAction} busy={busy}>
+          <p style={{ marginTop: 0 }}>
+            Time left now: {formatRemaining(action.row.deadline_at ? Date.parse(action.row.deadline_at) - serverNow : 0)}.
+            Their app shows the new end time within a few seconds.
+          </p>
+          <label style={{ display: 'block' }}>
+            Minutes to add (1–240)
+            <NumberInput
+              min={1}
+              max={240}
+              value={addMinutes}
+              onChange={setAddMinutes}
+              style={{ display: 'block', width: '120px', padding: '8px', margin: '6px 0 10px' }}
+            />
+          </label>
+          <label style={{ display: 'block' }}>
+            Reason (optional, shown in the timeline)
+            <input
+              value={addReason}
+              maxLength={200}
+              placeholder="e.g. laptop restarted, moved to a new laptop"
+              onChange={(e) => setAddReason(e.target.value)}
+              style={{ display: 'block', width: '100%', boxSizing: 'border-box', padding: '8px', margin: '6px 0 14px' }}
+            />
+          </label>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button type="button" onClick={closeAction} disabled={busy}>Cancel</button>
+            <button
+              type="button"
+              onClick={() => void runAction()}
+              disabled={busy || addMinutes < 1 || addMinutes > 240}
+              style={{ fontWeight: 'bold' }}
+            >
+              {busy ? 'Adding…' : `Add ${addMinutes} minute${addMinutes === 1 ? '' : 's'}`}
+            </button>
+          </div>
+        </Dialog>
+      )}
+
+      {extendAllOpen && (
+        <Dialog title="Extra time for everyone" onClose={() => setExtendAllOpen(false)} busy={busy}>
+          <p style={{ marginTop: 0 }}>
+            Everyone still working or paused gets the extra time (e.g. after a power cut or a network outage).
+            Students who start later get the full duration anyway.
+          </p>
+          <label style={{ display: 'block' }}>
+            Minutes to add (1–240)
+            <NumberInput
+              min={1}
+              max={240}
+              value={addMinutes}
+              onChange={setAddMinutes}
+              style={{ display: 'block', width: '120px', padding: '8px', margin: '6px 0 10px' }}
+            />
+          </label>
+          <label style={{ display: 'block' }}>
+            Reason (optional)
+            <input
+              value={addReason}
+              maxLength={200}
+              placeholder="e.g. power cut in lab 2"
+              onChange={(e) => setAddReason(e.target.value)}
+              style={{ display: 'block', width: '100%', boxSizing: 'border-box', padding: '8px', margin: '6px 0 14px' }}
+            />
+          </label>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button type="button" onClick={() => setExtendAllOpen(false)} disabled={busy}>Cancel</button>
+            <button
+              type="button"
+              onClick={() => void extendAll()}
+              disabled={busy || addMinutes < 1 || addMinutes > 240}
+              style={{ fontWeight: 'bold' }}
+            >
+              {busy ? 'Adding…' : `Add ${addMinutes} minute${addMinutes === 1 ? '' : 's'} for everyone`}
+            </button>
+          </div>
+        </Dialog>
+      )}
 
       {action?.kind === 'terminate' && (
         <Dialog title={`End ${action.row.student.full_name}’s exam?`} onClose={closeAction} busy={busy}>

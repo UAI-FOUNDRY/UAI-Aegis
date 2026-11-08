@@ -37,6 +37,8 @@ const EVENT_TEXT: Record<string, string> = {
   device_changed: 'Switched to another laptop',
   staff_lock: 'Locked by professor',
   staff_resume: 'Resumed by professor',
+  staff_extend: 'Extra time from professor',
+  forbidden_app_detected: 'Blocked app running',
   staff_terminate: 'Exam ended by professor',
 }
 

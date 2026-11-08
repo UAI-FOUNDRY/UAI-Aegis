@@ -4,6 +4,7 @@ import Stepper from './components/Stepper'
 import NumberInput from './components/NumberInput'
 import SafeMarkdown from './components/SafeMarkdown'
 import { useToast } from './components/ToastProvider'
+import QuestionFilesPanel from './QuestionFilesPanel'
 
 type Question = {
   id: string
@@ -1420,6 +1421,8 @@ export default function QuestionWizard({
       {currentStep === 2 && (
         <section>
           <h3>Step B — {isML ? 'Upload datasets' : 'Add tests'}</h3>
+
+          {questionId && !isHTML && <QuestionFilesPanel key={questionId} questionId={questionId} />}
 
           {!questionId ? (
             <p>Save the question first.</p>

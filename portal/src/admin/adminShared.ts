@@ -54,6 +54,7 @@ export const ADMIN_SECTIONS = [
   { id: 'batches', label: 'Batches' },
   { id: 'languages', label: 'Languages' },
   { id: 'releases', label: 'App releases' },
+  { id: 'blocked-apps', label: 'Blocked apps' },
   { id: 'audit', label: 'Audit' },
   { id: 'account', label: 'My account' },
 ] as const
